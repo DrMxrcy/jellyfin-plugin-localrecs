@@ -10,6 +10,7 @@ using Jellyfin.Plugin.LocalRecs.Services;
 using Jellyfin.Plugin.LocalRecs.Tests.Fixtures;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -83,10 +84,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             // Generate recommendations (real service, mocked Jellyfin)
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -136,10 +135,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
 
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -188,10 +185,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
 
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -239,10 +234,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
 
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -282,10 +275,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 NullLogger<UserProfileService>.Instance);
 
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             var stopwatch = Stopwatch.StartNew();
 
@@ -368,10 +359,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 NullLogger<UserProfileService>.Instance);
 
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             // Act - Build profile (should return null for no watch history)
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
@@ -448,10 +437,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
 
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -507,10 +494,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
 
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -590,10 +575,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 NullLogger<UserProfileService>.Instance);
 
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             // Act & Assert - Should handle gracefully
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, configWithSmallHalfLife);
@@ -638,10 +621,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
                 NullLogger<UserProfileService>.Instance);
 
             var engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             // Act & Assert
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, configWithExtremeBoosts);
@@ -750,6 +731,22 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             }
 
             return library;
+        }
+
+        private IServiceScopeFactory CreateScopeFactory()
+        {
+            var mockServiceProvider = new Mock<IServiceProvider>();
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(ILibraryManager))).Returns(_mockLibraryManager.Object);
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(IUserDataManager))).Returns(_mockUserDataManager.Object);
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(IUserManager))).Returns(_mockUserManager.Object);
+
+            var mockScope = new Mock<IServiceScope>();
+            mockScope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(f => f.CreateScope()).Returns(mockScope.Object);
+
+            return mockScopeFactory.Object;
         }
 
         #endregion

@@ -8,6 +8,7 @@ using Jellyfin.Plugin.LocalRecs.Utilities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 using LocalMediaType = Jellyfin.Plugin.LocalRecs.Models.MediaType;
@@ -20,28 +21,20 @@ namespace Jellyfin.Plugin.LocalRecs.Services
     /// </summary>
     public class RecommendationEngine
     {
-        private readonly IUserDataManager _userDataManager;
-        private readonly IUserManager _userManager;
-        private readonly ILibraryManager _libraryManager;
+        private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<RecommendationEngine> _logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RecommendationEngine"/> class.
         /// </summary>
-        /// <param name="userDataManager">The user data manager.</param>
-        /// <param name="userManager">The user manager.</param>
-        /// <param name="libraryManager">The library manager.</param>
         /// <param name="logger">The logger.</param>
+        /// <param name="scopeFactory">Service scope factory for resolving scoped dependencies per call.</param>
         public RecommendationEngine(
-            IUserDataManager userDataManager,
-            IUserManager userManager,
-            ILibraryManager libraryManager,
-            ILogger<RecommendationEngine> logger)
+            ILogger<RecommendationEngine> logger,
+            IServiceScopeFactory scopeFactory)
         {
-            _userDataManager = userDataManager ?? throw new ArgumentNullException(nameof(userDataManager));
-            _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
-            _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
         }
 
         /// <summary>
@@ -66,6 +59,11 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             LocalMediaType? mediaType = null,
             int maxResults = 25)
         {
+            using var scope = _scopeFactory.CreateScope();
+            var libraryManager = scope.ServiceProvider.GetRequiredService<ILibraryManager>();
+            var userDataManager = scope.ServiceProvider.GetRequiredService<IUserDataManager>();
+            var userManager = scope.ServiceProvider.GetRequiredService<IUserManager>();
+
             if (embeddings == null)
             {
                 throw new ArgumentNullException(nameof(embeddings));
@@ -106,11 +104,11 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     userProfile?.WatchedItemCount ?? 0,
                     config.MinWatchedItemsForPersonalization);
 
-                return GenerateColdStartRecommendations(userId, metadata, mediaType, maxResults);
+                return GenerateColdStartRecommendations(userId, metadata, mediaType, maxResults, userManager, userDataManager, libraryManager);
             }
 
             // Get unwatched candidates
-            var candidates = GetUnwatchedCandidates(userId, embeddings.Keys, metadata, mediaType, config);
+            var candidates = GetUnwatchedCandidates(userId, embeddings.Keys, metadata, mediaType, config, userManager, userDataManager, libraryManager);
 
             if (candidates.Count == 0)
             {
@@ -162,10 +160,11 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// Uses Jellyfin's built-in user-scoped query which respects library access settings.
         /// </summary>
         /// <param name="user">The Jellyfin user.</param>
+        /// <param name="libraryManager">The library manager.</param>
         /// <returns>HashSet of accessible item IDs.</returns>
-        private HashSet<Guid> GetUserAccessibleItemIds(Jellyfin.Database.Implementations.Entities.User user)
+        private HashSet<Guid> GetUserAccessibleItemIds(Jellyfin.Database.Implementations.Entities.User user, ILibraryManager libraryManager)
         {
-            var accessibleItems = _libraryManager.GetItemList(new InternalItemsQuery(user)
+            var accessibleItems = libraryManager.GetItemList(new InternalItemsQuery(user)
             {
                 IncludeItemTypes = new[] { BaseItemKind.Movie, BaseItemKind.Series },
                 IsVirtualItem = false,
@@ -190,15 +189,21 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <param name="metadata">Item metadata dictionary.</param>
         /// <param name="mediaType">Filter to specific media type.</param>
         /// <param name="config">Plugin configuration.</param>
+        /// <param name="userManager">The user manager.</param>
+        /// <param name="userDataManager">The user data manager.</param>
+        /// <param name="libraryManager">The library manager.</param>
         /// <returns>List of unwatched item IDs.</returns>
         private List<Guid> GetUnwatchedCandidates(
             Guid userId,
             IEnumerable<Guid> availableItemIds,
             IReadOnlyDictionary<Guid, MediaItemMetadata> metadata,
             LocalMediaType? mediaType,
-            PluginConfiguration config)
+            PluginConfiguration config,
+            IUserManager userManager,
+            IUserDataManager userDataManager,
+            ILibraryManager libraryManager)
         {
-            var user = _userManager.GetUserById(userId);
+            var user = userManager.GetUserById(userId);
             if (user == null)
             {
                 _logger.LogWarning("User not found: {UserId}", userId);
@@ -206,7 +211,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             }
 
             // Get items accessible to this user based on library permissions
-            var accessibleItemIds = GetUserAccessibleItemIds(user);
+            var accessibleItemIds = GetUserAccessibleItemIds(user, libraryManager);
             _logger.LogDebug(
                 "User {UserId} has access to {Count} items",
                 userId,
@@ -241,7 +246,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     continue;
                 }
 
-                var item = _libraryManager.GetItemById(itemId);
+                var item = libraryManager.GetItemById(itemId);
                 if (item == null)
                 {
                     _logger.LogDebug(
@@ -261,14 +266,14 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                         item.Path);
                 }
 
-                var userData = _userDataManager.GetUserData(user, item);
+                var userData = userDataManager.GetUserData(user, item);
 
                 // Exclude fully watched items
                 // For series, userData.Played is not reliable - we need to check episode watch status
                 if (itemMetadata.Type == LocalMediaType.Series && item is Series series)
                 {
                     // Exclude series with any watched episodes (both in-progress and fully watched)
-                    if (HasAnyWatchedEpisodes(series, user))
+                    if (HasAnyWatchedEpisodes(series, user, libraryManager))
                     {
                         _logger.LogDebug(
                             "Excluding series with watch history: {Name}",
@@ -306,11 +311,12 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// </summary>
         /// <param name="series">The series to check.</param>
         /// <param name="user">The user to check watch status for.</param>
+        /// <param name="libraryManager">The library manager.</param>
         /// <returns>True if the series has at least one watched episode.</returns>
-        private bool HasAnyWatchedEpisodes(Series series, Jellyfin.Database.Implementations.Entities.User user)
+        private bool HasAnyWatchedEpisodes(Series series, Jellyfin.Database.Implementations.Entities.User user, ILibraryManager libraryManager)
         {
             // Query for any watched episodes in this series
-            var watchedEpisodes = _libraryManager.GetItemList(new InternalItemsQuery(user)
+            var watchedEpisodes = libraryManager.GetItemList(new InternalItemsQuery(user)
             {
                 IncludeItemTypes = new[] { BaseItemKind.Episode },
                 AncestorIds = new[] { series.Id },
@@ -388,12 +394,18 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <param name="metadata">Item metadata dictionary.</param>
         /// <param name="mediaType">Filter to specific media type.</param>
         /// <param name="maxResults">Maximum number of recommendations.</param>
+        /// <param name="userManager">The user manager.</param>
+        /// <param name="userDataManager">The user data manager.</param>
+        /// <param name="libraryManager">The library manager.</param>
         /// <returns>List of top-rated items.</returns>
         private List<ScoredRecommendation> GenerateColdStartRecommendations(
             Guid userId,
             IReadOnlyDictionary<Guid, MediaItemMetadata> metadata,
             LocalMediaType? mediaType,
-            int maxResults)
+            int maxResults,
+            IUserManager userManager,
+            IUserDataManager userDataManager,
+            ILibraryManager libraryManager)
         {
             _logger.LogDebug(
                 "Generating cold-start recommendations for user {UserId}",
@@ -408,13 +420,13 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             }
 
             // Get unwatched items that the user has access to
-            var user = _userManager.GetUserById(userId);
+            var user = userManager.GetUserById(userId);
             var unwatchedCandidates = new List<MediaItemMetadata>();
 
             if (user != null)
             {
                 // Filter to items from libraries the user can access
-                var accessibleItemIds = GetUserAccessibleItemIds(user);
+                var accessibleItemIds = GetUserAccessibleItemIds(user, libraryManager);
 
                 foreach (var item in candidateMetadata)
                 {
@@ -424,13 +436,13 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                         continue;
                     }
 
-                    var libraryItem = _libraryManager.GetItemById(item.Id);
+                    var libraryItem = libraryManager.GetItemById(item.Id);
                     if (libraryItem == null)
                     {
                         continue;
                     }
 
-                    var userData = _userDataManager.GetUserData(user, libraryItem);
+                    var userData = userDataManager.GetUserData(user, libraryItem);
                     if (userData != null && userData.Played)
                     {
                         continue; // Skip watched items

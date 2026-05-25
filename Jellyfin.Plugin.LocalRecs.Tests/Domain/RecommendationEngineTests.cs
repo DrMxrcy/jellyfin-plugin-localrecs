@@ -10,6 +10,7 @@ using Jellyfin.Plugin.LocalRecs.Services;
 using Jellyfin.Plugin.LocalRecs.Tests.Fixtures;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -37,10 +38,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             _mockUserManager = new Mock<IUserManager>();
             _mockLibraryManager = new Mock<ILibraryManager>();
             _engine = new RecommendationEngine(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
-                NullLogger<RecommendationEngine>.Instance);
+                NullLogger<RecommendationEngine>.Instance,
+                CreateScopeFactory());
 
             _testUserId = Guid.NewGuid();
             _testUser = new User("TestUser", "Default", "Default");
@@ -596,6 +595,22 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             IEnumerable<Guid> watchedIds)
         {
             return CreateSciFiUserProfile(embeddings, watchedIds);
+        }
+
+        private IServiceScopeFactory CreateScopeFactory()
+        {
+            var mockServiceProvider = new Mock<IServiceProvider>();
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(ILibraryManager))).Returns(_mockLibraryManager.Object);
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(IUserDataManager))).Returns(_mockUserDataManager.Object);
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(IUserManager))).Returns(_mockUserManager.Object);
+
+            var mockScope = new Mock<IServiceScope>();
+            mockScope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(f => f.CreateScope()).Returns(mockScope.Object);
+
+            return mockScopeFactory.Object;
         }
 
         private void SetupWatchedItem(MediaItemMetadata item)
