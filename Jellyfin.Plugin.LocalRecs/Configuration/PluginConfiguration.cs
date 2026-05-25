@@ -16,7 +16,7 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
             MovieRecommendationCount = 25;
             TvRecommendationCount = 25;
             FavoriteBoost = 2.0;
-            RewatchBoost = 1.5;
+            RecentWatchBoost = 1.0;
             RecencyDecayHalfLifeDays = 365.0;
             MinWatchedItemsForPersonalization = 3;
             MaxVocabularyActors = 500;
@@ -42,9 +42,9 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
         public double FavoriteBoost { get; set; }
 
         /// <summary>
-        /// Gets or sets the boost multiplier for rewatched items.
+        /// Gets or sets the amplification factor for recently watched items (decay-squared boost).
         /// </summary>
-        public double RewatchBoost { get; set; }
+        public double RecentWatchBoost { get; set; }
 
         /// <summary>
         /// Gets or sets the recency decay half-life in days.
@@ -107,9 +107,9 @@ namespace Jellyfin.Plugin.LocalRecs.Configuration
                 errors.Add("FavoriteBoost must be non-negative");
             }
 
-            if (RewatchBoost < 0)
+            if (RecentWatchBoost < 0)
             {
-                errors.Add("RewatchBoost must be non-negative");
+                errors.Add("RecentWatchBoost must be non-negative");
             }
 
             if (RecencyDecayHalfLifeDays <= 0)

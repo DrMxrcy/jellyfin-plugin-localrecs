@@ -46,7 +46,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             _config = new PluginConfiguration
             {
                 FavoriteBoost = 2.0,
-                RewatchBoost = 1.5,
+                RecentWatchBoost = 1.0,
                 RecencyDecayHalfLifeDays = 365.0,
                 MinWatchedItemsForPersonalization = 3
             };
