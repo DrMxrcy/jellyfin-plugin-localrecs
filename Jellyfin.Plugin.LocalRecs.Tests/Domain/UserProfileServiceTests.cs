@@ -9,6 +9,7 @@ using Jellyfin.Plugin.LocalRecs.Services;
 using Jellyfin.Plugin.LocalRecs.Tests.Fixtures;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -35,9 +36,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             _mockUserManager = new Mock<IUserManager>();
             _mockLibraryManager = new Mock<ILibraryManager>();
             _service = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             _testUserId = Guid.NewGuid();
@@ -399,6 +398,22 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             {
                 SetupSpecificUserData(item, isFavorite: false, playCount: 1, daysAgo: 30);
             }
+        }
+
+        private IServiceScopeFactory CreateScopeFactory()
+        {
+            var mockServiceProvider = new Mock<IServiceProvider>();
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(ILibraryManager))).Returns(_mockLibraryManager.Object);
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(IUserDataManager))).Returns(_mockUserDataManager.Object);
+            mockServiceProvider.Setup(sp => sp.GetService(typeof(IUserManager))).Returns(_mockUserManager.Object);
+
+            var mockScope = new Mock<IServiceScope>();
+            mockScope.Setup(s => s.ServiceProvider).Returns(mockServiceProvider.Object);
+
+            var mockScopeFactory = new Mock<IServiceScopeFactory>();
+            mockScopeFactory.Setup(f => f.CreateScope()).Returns(mockScope.Object);
+
+            return mockScopeFactory.Object;
         }
 
         private void SetupSpecificUserData(

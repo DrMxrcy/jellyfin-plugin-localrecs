@@ -75,9 +75,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             // Build user profile (real service, mocked Jellyfin)
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
@@ -127,9 +125,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(dramaWatchHistory, library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
@@ -177,9 +173,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(singleWatch, library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
@@ -226,9 +220,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(watchHistory, library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
@@ -269,9 +261,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(watchHistory, library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var engine = new RecommendationEngine(
@@ -317,9 +307,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(new List<(MediaItemMetadata, bool, int, int)>(), library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             // Act & Assert - Empty library should throw early
@@ -353,9 +341,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(new List<(MediaItemMetadata, bool, int, int)>(), library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var engine = new RecommendationEngine(
@@ -429,9 +415,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(allWatched, library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
@@ -486,9 +470,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(watchHistory, library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
@@ -534,9 +516,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(watchHistory, library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             // Act & Assert - Should throw because zero half-life is invalid
@@ -569,9 +549,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(watchHistory, library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var engine = new RecommendationEngine(
@@ -615,9 +593,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             SetupUserDataMocks(watchHistory, library);
 
             var profileService = new UserProfileService(
-                _mockUserDataManager.Object,
-                _mockUserManager.Object,
-                _mockLibraryManager.Object,
+                CreateScopeFactory(),
                 NullLogger<UserProfileService>.Instance);
 
             var engine = new RecommendationEngine(

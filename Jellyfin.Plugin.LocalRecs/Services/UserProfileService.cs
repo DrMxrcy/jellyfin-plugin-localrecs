@@ -8,6 +8,7 @@ using Jellyfin.Plugin.LocalRecs.Utilities;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace Jellyfin.Plugin.LocalRecs.Services
@@ -18,27 +19,19 @@ namespace Jellyfin.Plugin.LocalRecs.Services
     /// </summary>
     public class UserProfileService
     {
-        private readonly IUserDataManager _userDataManager;
-        private readonly IUserManager _userManager;
-        private readonly ILibraryManager _libraryManager;
+        private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<UserProfileService> _logger;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="UserProfileService"/> class.
         /// </summary>
-        /// <param name="userDataManager">The user data manager.</param>
-        /// <param name="userManager">The user manager.</param>
-        /// <param name="libraryManager">The library manager.</param>
+        /// <param name="scopeFactory">Service scope factory for resolving scoped dependencies per call.</param>
         /// <param name="logger">The logger.</param>
         public UserProfileService(
-            IUserDataManager userDataManager,
-            IUserManager userManager,
-            ILibraryManager libraryManager,
+            IServiceScopeFactory scopeFactory,
             ILogger<UserProfileService> logger)
         {
-            _userDataManager = userDataManager ?? throw new ArgumentNullException(nameof(userDataManager));
-            _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
-            _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
+            _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
@@ -71,10 +64,15 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 throw new ArgumentException("Embeddings dictionary cannot be empty", nameof(embeddings));
             }
 
+            using var scope = _scopeFactory.CreateScope();
+            var userManager = scope.ServiceProvider.GetRequiredService<IUserManager>();
+            var userDataManager = scope.ServiceProvider.GetRequiredService<IUserDataManager>();
+            var libraryManager = scope.ServiceProvider.GetRequiredService<ILibraryManager>();
+
             _logger.LogDebug("Building user profile for user {UserId}", userId);
 
             // Get watch records for this user
-            var watchRecords = GetWatchRecords(userId, embeddings.Keys);
+            var watchRecords = GetWatchRecords(userId, embeddings.Keys, userManager, userDataManager, libraryManager);
 
             if (watchRecords.Count == 0)
             {
@@ -116,11 +114,19 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// </summary>
         /// <param name="userId">The user identifier.</param>
         /// <param name="availableItemIds">Available item IDs (from embeddings).</param>
+        /// <param name="userManager">The user manager.</param>
+        /// <param name="userDataManager">The user data manager.</param>
+        /// <param name="libraryManager">The library manager.</param>
         /// <returns>List of watch records.</returns>
-        private List<WatchRecord> GetWatchRecords(Guid userId, IEnumerable<Guid> availableItemIds)
+        private List<WatchRecord> GetWatchRecords(
+            Guid userId,
+            IEnumerable<Guid> availableItemIds,
+            IUserManager userManager,
+            IUserDataManager userDataManager,
+            ILibraryManager libraryManager)
         {
             var records = new List<WatchRecord>();
-            var user = _userManager.GetUserById(userId);
+            var user = userManager.GetUserById(userId);
 
             if (user == null)
             {
@@ -132,13 +138,13 @@ namespace Jellyfin.Plugin.LocalRecs.Services
 
             foreach (var itemId in itemIdSet)
             {
-                var item = _libraryManager.GetItemById(itemId);
+                var item = libraryManager.GetItemById(itemId);
                 if (item == null)
                 {
                     continue;
                 }
 
-                var userData = _userDataManager.GetUserData(user, item);
+                var userData = userDataManager.GetUserData(user, item);
 
                 if (userData == null)
                 {
@@ -150,7 +156,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 DateTime lastPlayedDate;
                 if (item is Series series)
                 {
-                    var seriesLastPlayed = GetLastWatchedEpisodeDate(series, user);
+                    var seriesLastPlayed = GetLastWatchedEpisodeDate(series, user, userDataManager, libraryManager);
                     if (seriesLastPlayed == null)
                     {
                         continue;
@@ -186,9 +192,13 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// Returns the most recent LastPlayedDate across watched episodes of a series,
         /// or null if no episodes have been watched.
         /// </summary>
-        private DateTime? GetLastWatchedEpisodeDate(Series series, Jellyfin.Database.Implementations.Entities.User user)
+        private DateTime? GetLastWatchedEpisodeDate(
+            Series series,
+            Jellyfin.Database.Implementations.Entities.User user,
+            IUserDataManager userDataManager,
+            ILibraryManager libraryManager)
         {
-            var result = _libraryManager.GetItemList(new InternalItemsQuery(user)
+            var result = libraryManager.GetItemList(new InternalItemsQuery(user)
             {
                 IncludeItemTypes = new[] { BaseItemKind.Episode },
                 AncestorIds = new[] { series.Id },
@@ -203,7 +213,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return null;
             }
 
-            var epData = _userDataManager.GetUserData(user, result[0]);
+            var epData = userDataManager.GetUserData(user, result[0]);
             return epData?.LastPlayedDate ?? DateTime.UtcNow;
         }
 
