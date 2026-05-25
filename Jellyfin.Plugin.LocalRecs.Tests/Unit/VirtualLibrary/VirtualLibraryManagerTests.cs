@@ -8,6 +8,7 @@ using Jellyfin.Plugin.LocalRecs.VirtualLibrary;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -223,7 +224,20 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
                 Id = movieId,
                 Name = "Art Movie",
                 Path = _sourceMediaFile,
-                ProductionYear = 2023
+                ProductionYear = 2023,
+                ImageInfos = new ItemImageInfo[]
+                {
+                    new ItemImageInfo
+                    {
+                        Type = ImageType.Primary,
+                        Path = Path.Combine(_sourceMediaDir, "poster.jpg")
+                    },
+                    new ItemImageInfo
+                    {
+                        Type = ImageType.Backdrop,
+                        Path = Path.Combine(_sourceMediaDir, "fanart.jpg")
+                    }
+                }
             };
 
             _mockLibraryManager.Setup(m => m.GetItemById(movieId)).Returns(mockMovie);

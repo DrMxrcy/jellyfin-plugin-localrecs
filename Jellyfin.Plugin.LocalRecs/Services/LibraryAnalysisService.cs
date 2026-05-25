@@ -135,7 +135,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 return null;
             }
 
-            // Skip items from virtual libraries (our .strm recommendation files)
+            // Skip items from virtual libraries (our symlinked recommendation items)
             // This prevents virtual library items from being considered for recommendations
             if (!string.IsNullOrEmpty(item.Path) &&
                 (item.Path.EndsWith(".strm", StringComparison.OrdinalIgnoreCase) ||

@@ -131,7 +131,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         }
 
         [Fact]
-        public void BuildUserProfile_WithRewatches_RewatchesGetHigherWeight()
+        public void BuildUserProfile_WithRecentWatchEmphasis_RecentItemGetsHigherWeight()
         {
             // Arrange
             var library = TestMediaLibrary.CreateTestMovies();
@@ -141,9 +141,9 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             var embeddings = CreateEmbeddings(library);
             var metadata = library.ToDictionary(i => i.Id, i => i);
 
-            // Setup: Godfather watched 5 times, Toy Story watched once (same recency, not favorites)
-            SetupSpecificUserData(godfather, isFavorite: false, playCount: 5, daysAgo: 10);
-            SetupSpecificUserData(toyStory, isFavorite: false, playCount: 1, daysAgo: 10);
+            // Setup: Godfather watched recently (5 days ago), Toy Story watched long ago (300 days)
+            SetupSpecificUserData(godfather, isFavorite: false, playCount: 1, daysAgo: 5);
+            SetupSpecificUserData(toyStory, isFavorite: false, playCount: 1, daysAgo: 300);
 
             // Act
             var profile = _service.BuildUserProfile(_testUserId, embeddings, _config);
@@ -152,7 +152,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             profile.Should().NotBeNull();
             profile!.WatchedItemCount.Should().Be(2);
 
-            // Verify that the taste vector is more similar to the rewatched item
+            // Verify that the taste vector is more similar to the recently watched item
             var godfatherSimilarity = Utilities.VectorMath.CosineSimilarity(
                 profile.TasteVector,
                 embeddings[godfather.Id].Vector);
@@ -160,9 +160,9 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
                 profile.TasteVector,
                 embeddings[toyStory.Id].Vector);
 
-            // Godfather (rewatched 5x) should have higher influence on taste vector
+            // Godfather (recently watched) should have higher influence on taste vector
             godfatherSimilarity.Should().BeGreaterThan(toyStorySimilarity,
-                "rewatched item should have more influence due to rewatch boost");
+                "recently watched item should have more influence due to recency decay and recent watch emphasis");
         }
 
         [Fact]
