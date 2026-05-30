@@ -110,6 +110,11 @@ namespace Jellyfin.Plugin.LocalRecs.Models
         public string? Path { get; set; }
 
         /// <summary>
+        /// Gets or sets when the item's metadata was last modified. Used for embedding cache fingerprinting.
+        /// </summary>
+        public DateTime DateModified { get; set; } = DateTime.MinValue;
+
+        /// <summary>
         /// Adds a genre to the item.
         /// </summary>
         /// <param name="genre">The genre to add.</param>

@@ -32,7 +32,16 @@ namespace Jellyfin.Plugin.LocalRecs
             // Phase 5: Recommendation Engine
             serviceCollection.AddSingleton<RecommendationEngine>();
 
-            // Phase 6: Recommendation Refresh Service
+            // Phase 6: Embedding Cache + Recommendation Refresh Service
+            serviceCollection.AddSingleton(sp =>
+            {
+                var appPaths = sp.GetRequiredService<IApplicationPaths>();
+                var cacheDir = Path.Combine(appPaths.PluginsPath, "LocalRecs", "cache");
+                return new EmbeddingCacheService(
+                    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<EmbeddingCacheService>>(),
+                    cacheDir);
+            });
+
             serviceCollection.AddSingleton<RecommendationRefreshService>();
 
             // Phase 7: Virtual Library Services

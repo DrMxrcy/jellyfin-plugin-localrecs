@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.LocalRecs.Configuration;
@@ -23,24 +25,23 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
         private readonly IUserManager _userManager;
         private readonly RecommendationRefreshService _refreshService;
         private readonly VirtualLibraryManager _virtualLibraryManager;
+        private readonly ILibraryManager _libraryManager;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RecommendationRefreshTask"/> class.
         /// </summary>
-        /// <param name="logger">Logger instance.</param>
-        /// <param name="userManager">User manager.</param>
-        /// <param name="refreshService">Recommendation refresh service.</param>
-        /// <param name="virtualLibraryManager">Virtual library manager.</param>
         public RecommendationRefreshTask(
             ILogger<RecommendationRefreshTask> logger,
             IUserManager userManager,
             RecommendationRefreshService refreshService,
-            VirtualLibraryManager virtualLibraryManager)
+            VirtualLibraryManager virtualLibraryManager,
+            ILibraryManager libraryManager)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
             _refreshService = refreshService ?? throw new ArgumentNullException(nameof(refreshService));
             _virtualLibraryManager = virtualLibraryManager ?? throw new ArgumentNullException(nameof(virtualLibraryManager));
+            _libraryManager = libraryManager ?? throw new ArgumentNullException(nameof(libraryManager));
         }
 
         /// <inheritdoc />
@@ -81,16 +82,15 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
 
                 // Step 2: Generate recommendations for all users (5-80% progress)
                 var userIds = users.Select(u => u.Id).ToList();
-                var userRecommendations = await _refreshService.GenerateRecommendationsForMultipleUsersAsync(
-                    userIds,
-                    config).ConfigureAwait(false);
+                var refreshResult = await _refreshService.GenerateRecommendationsForMultipleUsersAsync(
+                    userIds, config).ConfigureAwait(false);
 
                 progress?.Report(80);
 
                 // Step 3: Sync virtual library symlinks for each user (80-90% progress)
                 cancellationToken.ThrowIfCancellationRequested();
                 var successfulUsers = 0;
-                var failedUsers = new List<string>();
+                var failedSyncUsers = new List<(Guid UserId, string Username, string Error)>();
 
                 foreach (var user in users)
                 {
@@ -98,27 +98,17 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
 
                     try
                     {
-                        if (userRecommendations.TryGetValue(user.Id, out var recs))
+                        if (refreshResult.Recommendations.TryGetValue(user.Id, out var recs))
                         {
                             _logger.LogDebug("Syncing virtual library symlinks for user {UserName} ({UserId})", user.Username, user.Id);
 
-                            // Update virtual library files
-                            _virtualLibraryManager.SyncRecommendations(
-                                user.Id,
-                                recs.Movies,
-                                MediaType.Movie);
-
-                            _virtualLibraryManager.SyncRecommendations(
-                                user.Id,
-                                recs.Tv,
-                                MediaType.Series);
+                            _virtualLibraryManager.SyncRecommendations(user.Id, recs.Movies, MediaType.Movie);
+                            _virtualLibraryManager.SyncRecommendations(user.Id, recs.Tv, MediaType.Series);
 
                             successfulUsers++;
                             _logger.LogDebug(
                                 "Successfully updated virtual library symlinks for {UserName}: {MovieCount} movies, {TvCount} TV shows",
-                                user.Username,
-                                recs.Movies.Count,
-                                recs.Tv.Count);
+                                user.Username, recs.Movies.Count, recs.Tv.Count);
                         }
                     }
                     catch (OperationCanceledException)
@@ -128,7 +118,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                     catch (Exception ex)
                     {
                         _logger.LogError(ex, "Failed to sync virtual library symlinks for user {UserName} ({UserId})", user.Username, user.Id);
-                        failedUsers.Add(user.Username);
+                        failedSyncUsers.Add((user.Id, user.Username, ex.Message));
                     }
                 }
 
@@ -138,24 +128,33 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                 _logger.LogDebug("Waiting for file system flush before triggering library scan");
                 await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
 
-                LogLibraryScanInstructions();
+                _libraryManager.QueueLibraryScan();
+                _logger.LogInformation("Library scan queued");
 
                 progress?.Report(95);
 
-                // Note: Play status sync happens automatically via ItemAdded event when Jellyfin scans the new symlinks
-
-                // Step 5: Report results (100% progress)
+                // Step 5: Write diagnostics and report results
                 var duration = DateTime.UtcNow - startTime;
+
+                var allErrors = refreshResult.Errors
+                    .Select(e =>
+                    {
+                        var username = users.FirstOrDefault(u => u.Id == e.UserId)?.Username ?? e.UserId.ToString();
+                        return (e.UserId, username, e.Error.Message);
+                    })
+                    .Concat(failedSyncUsers)
+                    .ToList();
+
+                WriteLastRefreshStatus(duration, users.Count, successfulUsers, allErrors,
+                    refreshResult.TotalLibraryItems, refreshResult.EmbeddingsCached);
+
                 _logger.LogInformation(
                     "Recommendation refresh completed in {Duration:F2} seconds: {Success}/{Total} users successful",
-                    duration.TotalSeconds,
-                    successfulUsers,
-                    users.Count);
+                    duration.TotalSeconds, successfulUsers, users.Count);
 
-                if (failedUsers.Count > 0)
-                {
-                    _logger.LogWarning("Failed to sync recommendations for {Count} users: {Users}", failedUsers.Count, string.Join(", ", failedUsers));
-                }
+                if (allErrors.Count > 0)
+                    _logger.LogWarning("Failed for {Count} users: {Users}",
+                        allErrors.Count, string.Join(", ", allErrors.Select(e => e.username)));
 
                 progress?.Report(100);
             }
@@ -174,7 +173,6 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
         /// <inheritdoc />
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
         {
-            // Daily execution at 4:00 AM by default
             return new[]
             {
                 new TaskTriggerInfo
@@ -185,9 +183,46 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
             };
         }
 
-        private void LogLibraryScanInstructions()
+        private void WriteLastRefreshStatus(
+            TimeSpan duration,
+            int totalUsers,
+            int successfulUsers,
+            List<(Guid UserId, string Username, string Error)> errors,
+            int totalLibraryItems,
+            bool embeddingsCached)
         {
-            _logger.LogInformation("Virtual library files updated. Scan recommendation libraries manually or wait for the next scheduled scan to see updates.");
+            try
+            {
+                var dataDir = Plugin.Instance?.DataFolderPath;
+                if (dataDir == null)
+                    return;
+
+                var failedUsers = errors.Select(e => new
+                {
+                    userId = e.UserId.ToString(),
+                    username = e.Username,
+                    error = e.Error
+                }).ToList();
+
+                var status = new
+                {
+                    completedAt = DateTime.UtcNow,
+                    durationSeconds = Math.Round(duration.TotalSeconds, 1),
+                    totalUsers,
+                    successfulUsers,
+                    failedUsers,
+                    totalLibraryItems,
+                    embeddingsCached,
+                    errors = failedUsers
+                };
+
+                var json = JsonSerializer.Serialize(status, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(Path.Combine(dataDir, "last-refresh.json"), json);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to write last-refresh.json (non-fatal)");
+            }
         }
     }
 }

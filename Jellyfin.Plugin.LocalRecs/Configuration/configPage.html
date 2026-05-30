@@ -33,6 +33,10 @@
                     
                     <!-- Settings Tab -->
                     <div id="tab-settings" class="tab-content" style="display:none;">
+                        <div id="lastRefreshStatus" style="display:none;margin-bottom:1.5em;padding:1em;background:var(--color-neutral-dark,#222);border-radius:4px;">
+                            <h3 style="margin:0 0 0.5em 0;font-size:1em;">Last Refresh</h3>
+                            <div id="lastRefreshContent"></div>
+                        </div>
                         <h2 class="sectionTitle">Recommendation Settings</h2>
                         
                         <div class="inputContainer">
@@ -202,12 +206,12 @@
                             });
                             page.querySelector('#tab-' + item.tab).style.display = 'block';
                             
-                            // Load setup status when switching to setup tab
                             if (item.tab === 'setup') {
                                 self.loadSetupStatus(page);
                             }
-                            
-                            // Load benchmark results when switching to actions tab
+                            if (item.tab === 'settings') {
+                                self.loadRefreshStatus(page);
+                            }
                             if (item.tab === 'actions') {
                                 self.loadBenchmarkResults(page);
                             }
@@ -216,50 +220,114 @@
                 },
                 
                 /**
-                 * Loads setup paths from backend API.
+                 * Loads setup status from the SetupStatus API and renders a per-user checklist.
                  */
                 loadSetupStatus: function(page) {
                     var self = this;
                     var container = page.querySelector('#setupStatusContainer');
-                    container.innerHTML = '<p>Loading library paths...</p>';
-                    
-                    ApiClient.getJSON(ApiClient.getUrl('LocalRecs/Setup/Paths'))
-                        .then(function(users) {
-                            if (!users || users.length === 0) {
-                                container.innerHTML = '<p>No users found. Create users in Jellyfin first, then refresh this page.</p>';
-                                return;
-                            }
-                            
-                            // Check if all libraries are created
-                            var allCreated = users.every(function(user) { return user.LibrariesCreated; });
-                            
-                            if (allCreated) {
-                                container.innerHTML = '<div style="background: rgba(76, 175, 80, 0.1); padding: 1.5em; border-left: 4px solid #4caf50;">' +
-                                    '<h3 style="margin-top: 0;">Setup Complete!</h3>' +
-                                    '<p>All recommendation libraries have been created. No further setup is required.</p>' +
-                                    '<p>Run the "Refresh Local Recommendations" scheduled task to generate recommendations.</p>' +
-                                    '</div>';
-                                return;
-                            }
-                            
-                            var html = '<div class="paperList">';
-                            
-                            users.forEach(function(user) {
-                                html += self.renderUserSetupCard(user);
-                            });
-                            
-                            html += '</div>';
-                            html += self.renderNextStepsBox();
-                            
-                            container.innerHTML = html;
-                            
-                            // Add copy button event listeners
+                    while (container.firstChild) { container.removeChild(container.firstChild); }
+                    var loading = document.createElement('p');
+                    loading.textContent = 'Loading setup status...';
+                    container.appendChild(loading);
+
+                    ApiClient.getJSON(ApiClient.getUrl('LocalRecs/SetupStatus'))
+                        .then(function(data) {
+                            self.renderSetupChecklist(container, data);
                             self.initCopyButtons(page);
                         })
                         .catch(function(error) {
-                            console.error('Failed to load library paths:', error);
-                            container.innerHTML = '<p style="color: #ff5252;">Error loading library paths. Please check that the plugin is properly installed.</p>';
+                            console.error('Failed to load setup status:', error);
+                            while (container.firstChild) { container.removeChild(container.firstChild); }
+                            var err = document.createElement('p');
+                            err.style.color = '#ff5252';
+                            err.textContent = 'Error loading setup status. Please check that the plugin is properly installed.';
+                            container.appendChild(err);
                         });
+                },
+
+                /**
+                 * Renders the setup checklist using DOM methods (no innerHTML with dynamic content).
+                 */
+                renderSetupChecklist: function(container, data) {
+                    while (container.firstChild) { container.removeChild(container.firstChild); }
+
+                    if (!data || !data.users || data.users.length === 0) {
+                        var noUsers = document.createElement('p');
+                        noUsers.textContent = 'No users found. Create users in Jellyfin first, then refresh this page.';
+                        container.appendChild(noUsers);
+                        return;
+                    }
+
+                    if (data.isWindows) {
+                        var warn = document.createElement('div');
+                        warn.style.cssText = 'background:rgba(255,193,7,0.15);padding:.75em 1em;border-radius:4px;margin-bottom:1em;border-left:4px solid #ffc107;';
+                        var warnStrong = document.createElement('strong');
+                        warnStrong.textContent = 'Windows: ';
+                        warn.appendChild(warnStrong);
+                        var warnText = document.createTextNode('Symlinks require Developer Mode or Administrator. Settings → Privacy & security → For developers → Developer Mode.');
+                        warn.appendChild(warnText);
+                        container.appendChild(warn);
+                    }
+
+                    data.users.forEach(function(user) {
+                        var userDiv = document.createElement('div');
+                        userDiv.style.cssText = 'margin-bottom:1.5em;';
+
+                        var heading = document.createElement('h3');
+                        heading.style.cssText = 'margin:0 0 .5em 0;';
+                        heading.textContent = user.username || '';
+                        userDiv.appendChild(heading);
+
+                        function makeRow(ok, label, path) {
+                            var tr = document.createElement('tr');
+
+                            var tdIcon = document.createElement('td');
+                            tdIcon.style.cssText = 'padding:4px 6px 4px 0;white-space:nowrap;font-size:1.1em;';
+                            tdIcon.textContent = ok ? '✅' : '❌';
+                            tr.appendChild(tdIcon);
+
+                            var tdLabel = document.createElement('td');
+                            tdLabel.style.cssText = 'padding:4px 12px 4px 0;white-space:nowrap;';
+                            tdLabel.textContent = label;
+                            tr.appendChild(tdLabel);
+
+                            var tdPath = document.createElement('td');
+                            tdPath.style.cssText = 'padding:4px 0;';
+                            if (path) {
+                                var code = document.createElement('code');
+                                code.style.cssText = 'font-size:.85em;opacity:.8;margin-right:.5em;';
+                                code.textContent = path;
+                                tdPath.appendChild(code);
+
+                                var copyBtn = document.createElement('button');
+                                copyBtn.setAttribute('is', 'emby-button');
+                                copyBtn.type = 'button';
+                                copyBtn.className = 'raised copy-button';
+                                copyBtn.setAttribute('data-path', path);
+                                copyBtn.style.cssText = 'font-size:.8em;padding:2px 6px;margin-right:.4em;';
+                                copyBtn.textContent = 'Copy';
+                                tdPath.appendChild(copyBtn);
+
+                                if (!ok) {
+                                    var addLink = document.createElement('a');
+                                    addLink.href = '#!/addvirtualfolder.html';
+                                    addLink.style.cssText = 'font-size:.85em;';
+                                    addLink.textContent = 'Add Library →';
+                                    tdPath.appendChild(addLink);
+                                }
+                            }
+                            tr.appendChild(tdPath);
+                            return tr;
+                        }
+
+                        var table = document.createElement('table');
+                        table.style.cssText = 'border-collapse:collapse;';
+                        table.appendChild(makeRow(user.directoriesExist, 'Plugin directories created', null));
+                        table.appendChild(makeRow(user.moviesLibraryLinked, 'Movies library linked', user.moviesPath));
+                        table.appendChild(makeRow(user.tvLibraryLinked, 'TV library linked', user.tvPath));
+                        userDiv.appendChild(table);
+                        container.appendChild(userDiv);
+                    });
                 },
                 
                 /**
@@ -416,6 +484,65 @@
                     document.body.removeChild(textArea);
                 },
                 
+                timeSince: function(date) {
+                    var seconds = Math.floor((new Date() - date) / 1000);
+                    if (seconds < 60) return 'just now';
+                    var minutes = Math.floor(seconds / 60);
+                    if (minutes < 60) return minutes + ' minute' + (minutes === 1 ? '' : 's') + ' ago';
+                    var hours = Math.floor(minutes / 60);
+                    if (hours < 24) return hours + ' hour' + (hours === 1 ? '' : 's') + ' ago';
+                    var days = Math.floor(hours / 24);
+                    return days + ' day' + (days === 1 ? '' : 's') + ' ago';
+                },
+
+                makeStatusRow: function(labelText, valueText) {
+                    var tr = document.createElement('tr');
+                    var tdLabel = document.createElement('td');
+                    tdLabel.style.cssText = 'padding:2px 8px 2px 0;opacity:.7;';
+                    tdLabel.textContent = labelText;
+                    var tdValue = document.createElement('td');
+                    tdValue.textContent = valueText;
+                    tr.appendChild(tdLabel);
+                    tr.appendChild(tdValue);
+                    return tr;
+                },
+
+                loadRefreshStatus: function(page) {
+                    var self = this;
+                    ApiClient.ajax({ type: 'GET', url: ApiClient.getUrl('LocalRecs/RefreshStatus') })
+                        .then(function(response) {
+                            return response.json ? response.json() : JSON.parse(response);
+                        })
+                        .then(function(data) {
+                            var block = page.querySelector('#lastRefreshStatus');
+                            var content = page.querySelector('#lastRefreshContent');
+                            if (!block || !content) return;
+
+                            var ago = data.completedAt ? self.timeSince(new Date(data.completedAt)) : 'unknown';
+                            var failedCount = (data.failedUsers && data.failedUsers.length) || 0;
+                            var userLine = failedCount > 0
+                                ? data.successfulUsers + '/' + data.totalUsers + ' — ' +
+                                  failedCount + ' failed: ' +
+                                  data.failedUsers.map(function(u) { return String(u.username || ''); }).join(', ')
+                                : (data.successfulUsers + '/' + data.totalUsers + ' successful');
+
+                            var table = document.createElement('table');
+                            table.style.cssText = 'border-collapse:collapse;width:100%;';
+                            table.appendChild(self.makeStatusRow('Completed', ago));
+                            table.appendChild(self.makeStatusRow('Duration', (data.durationSeconds || '?') + 's'));
+                            table.appendChild(self.makeStatusRow('Users', userLine));
+                            table.appendChild(self.makeStatusRow('Library items', String(data.totalLibraryItems || '?')));
+                            table.appendChild(self.makeStatusRow('Embeddings', data.embeddingsCached ? 'from cache' : 'recomputed'));
+
+                            while (content.firstChild) { content.removeChild(content.firstChild); }
+                            content.appendChild(table);
+                            block.style.display = 'block';
+                        })
+                        .catch(function() {
+                            // 404 = no refresh has run yet; leave the block hidden
+                        });
+                },
+
                 /**
                  * Loads plugin configuration.
                  */
@@ -425,17 +552,17 @@
                     
                     ApiClient.getPluginConfiguration(self.pluginId)
                         .then(function(config) {
-                            page.querySelector('#movieRecommendationCount').value = config.MovieRecommendationCount || 25;
-                            page.querySelector('#tvRecommendationCount').value = config.TvRecommendationCount || 25;
-                            page.querySelector('#minWatchedItems').value = config.MinWatchedItemsForPersonalization || 3;
-                            page.querySelector('#favoriteBoost').value = config.FavoriteBoost || 2.0;
-                            page.querySelector('#recentWatchBoost').value = config.RecentWatchBoost || 1.0;
-                            page.querySelector('#recencyDecayHalfLife').value = config.RecencyDecayHalfLifeDays || 365;
-                            page.querySelector('#maxVocabularyActors').value = config.MaxVocabularyActors || 500;
-                            page.querySelector('#maxVocabularyDirectors').value = config.MaxVocabularyDirectors || 0;
-                            page.querySelector('#maxVocabularyTags').value = config.MaxVocabularyTags || 500;
-                            page.querySelector('#enableRatingProximity').checked = config.EnableRatingProximity || false;
-                            page.querySelector('#ratingProximityWeight').value = config.RatingProximityWeight || 0.2;
+                            page.querySelector('#movieRecommendationCount').value = config.MovieRecommendationCount ?? 25;
+                            page.querySelector('#tvRecommendationCount').value = config.TvRecommendationCount ?? 25;
+                            page.querySelector('#minWatchedItems').value = config.MinWatchedItemsForPersonalization ?? 3;
+                            page.querySelector('#favoriteBoost').value = config.FavoriteBoost ?? 2.0;
+                            page.querySelector('#recentWatchBoost').value = config.RecentWatchBoost ?? 1.0;
+                            page.querySelector('#recencyDecayHalfLife').value = config.RecencyDecayHalfLifeDays ?? 365;
+                            page.querySelector('#maxVocabularyActors').value = config.MaxVocabularyActors ?? 500;
+                            page.querySelector('#maxVocabularyDirectors').value = config.MaxVocabularyDirectors ?? 0;
+                            page.querySelector('#maxVocabularyTags').value = config.MaxVocabularyTags ?? 500;
+                            page.querySelector('#enableRatingProximity').checked = config.EnableRatingProximity ?? false;
+                            page.querySelector('#ratingProximityWeight').value = config.RatingProximityWeight ?? 0.2;
 
                             self.updateFieldVisibility(page);
                             Dashboard.hideLoadingMsg();
@@ -566,19 +693,23 @@
                     if (page.querySelector('.tab-button-setup').classList.contains('ui-btn-active')) {
                         LocalRecsConfig.loadSetupStatus(page);
                     }
+                    if (page.querySelector('.tab-button-settings').classList.contains('ui-btn-active')) {
+                        LocalRecsConfig.loadRefreshStatus(page);
+                    }
                     return;
                 }
-                
+
                 LocalRecsConfig.initialized = true;
-                
+
                 // Initialize tabs
                 LocalRecsConfig.initTabs(page);
-                
+
                 // Load setup status (default tab)
                 LocalRecsConfig.loadSetupStatus(page);
-                
+
                 // Load configuration for settings tab
                 LocalRecsConfig.loadConfiguration(page);
+                LocalRecsConfig.loadRefreshStatus(page);
                 
                 // Setup event listeners for settings
                 page.querySelector('#enableRatingProximity').addEventListener('change', function() {

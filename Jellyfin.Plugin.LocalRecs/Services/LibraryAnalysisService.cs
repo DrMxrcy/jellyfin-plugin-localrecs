@@ -230,6 +230,8 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             // Set file path
             metadata.Path = item.Path;
 
+            metadata.DateModified = item.DateModified;
+
             return metadata;
         }
     }
