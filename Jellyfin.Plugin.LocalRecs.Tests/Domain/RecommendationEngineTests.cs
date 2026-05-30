@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using FluentAssertions;
 using Jellyfin.Database.Implementations.Entities;
@@ -21,7 +22,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
     /// Tests for <see cref="RecommendationEngine"/>.
     /// Validates recommendation generation, scoring, cold-start handling, and performance.
     /// </summary>
-    public class RecommendationEngineTests
+    public class RecommendationEngineTests : IDisposable
     {
         private readonly Mock<IUserDataManager> _mockUserDataManager;
         private readonly Mock<IUserManager> _mockUserManager;
@@ -31,15 +32,22 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
         private readonly Guid _testUserId;
         private readonly User _testUser;
         private readonly List<BaseItem> _registeredItems = new List<BaseItem>();
+        private readonly string _tempDir;
+        private readonly UserPreferencesService _preferencesService;
 
         public RecommendationEngineTests()
         {
             _mockUserDataManager = new Mock<IUserDataManager>();
             _mockUserManager = new Mock<IUserManager>();
             _mockLibraryManager = new Mock<ILibraryManager>();
+            _tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+            Directory.CreateDirectory(_tempDir);
+            _preferencesService = new UserPreferencesService(
+                NullLogger<UserPreferencesService>.Instance, _tempDir);
             _engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             _testUserId = Guid.NewGuid();
             _testUser = new User("TestUser", "Default", "Default");
@@ -825,6 +833,100 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             recommendations.Should().HaveCountGreaterThanOrEqualTo(
                 Math.Min(unwatchedMovies.Count, 10),
                 "all items are accessible so all eligible items should be candidates");
+        }
+
+        #endregion
+
+        public void Dispose() => Directory.Delete(_tempDir, recursive: true);
+
+        #region Negative Feedback and Genre Weight Tests
+
+        [Fact]
+        public void GenerateRecommendations_ExcludedItem_NotInResults()
+        {
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            var watchedMovies = library.Take(3).ToList();
+            foreach (var movie in watchedMovies) SetupWatchedItem(movie);
+            var unwatchedMovies = library.Skip(3).ToList();
+            foreach (var movie in unwatchedMovies) SetupUnwatchedItem(movie);
+
+            var userProfile = CreateGenericUserProfile(embeddings, watchedMovies.Select(m => m.Id));
+
+            var excludedItem = unwatchedMovies[0];
+            var prefs = new UserPreferences();
+            prefs.ExcludedItemIds.Add(excludedItem.Id);
+            _preferencesService.SavePreferences(_testUserId, prefs);
+
+            var recommendations = _engine.GenerateRecommendations(
+                _testUserId, userProfile, embeddings, metadata, _config, maxResults: 10);
+
+            recommendations.Should().NotContain(r => r.ItemId == excludedItem.Id,
+                "explicitly excluded items must never appear in recommendations");
+        }
+
+        [Fact]
+        public void GenerateRecommendations_GenreWeightHigh_BoostsItemScore()
+        {
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            var sciFiWatched = library.Where(m => m.Genres.Contains("Science Fiction")).Take(3).ToList();
+            foreach (var m in sciFiWatched) SetupWatchedItem(m);
+            foreach (var m in library.Where(m => !sciFiWatched.Contains(m))) SetupUnwatchedItem(m);
+
+            var userProfile = CreateGenericUserProfile(embeddings, sciFiWatched.Select(m => m.Id));
+            var alien = library.First(m => m.Name == "Alien");
+
+            var baselineRecs = _engine.GenerateRecommendations(
+                _testUserId, userProfile, embeddings, metadata, _config, maxResults: 10);
+            var alienBaseline = baselineRecs.FirstOrDefault(r => r.ItemId == alien.Id);
+            alienBaseline.Should().NotBeNull("Alien should appear in baseline recommendations for a Sci-Fi fan");
+
+            var prefs = new UserPreferences();
+            prefs.GenreWeights["Horror"] = 3.0f;
+            _preferencesService.SavePreferences(_testUserId, prefs);
+
+            var boostedRecs = _engine.GenerateRecommendations(
+                _testUserId, userProfile, embeddings, metadata, _config, maxResults: 10);
+            var alienBoosted = boostedRecs.First(r => r.ItemId == alien.Id);
+
+            alienBoosted.Score.Should().BeGreaterThan(alienBaseline!.Score,
+                "a 3x genre weight boost must increase the item's final score");
+        }
+
+        [Fact]
+        public void GenerateRecommendations_GenreWeightLow_SuppressesItemScore()
+        {
+            var library = TestMediaLibrary.CreateTestMovies();
+            var embeddings = CreateEmbeddings(library);
+            var metadata = library.ToDictionary(i => i.Id, i => i);
+
+            var sciFiWatched = library.Where(m => m.Genres.Contains("Science Fiction")).Take(3).ToList();
+            foreach (var m in sciFiWatched) SetupWatchedItem(m);
+            foreach (var m in library.Where(m => !sciFiWatched.Contains(m))) SetupUnwatchedItem(m);
+
+            var userProfile = CreateGenericUserProfile(embeddings, sciFiWatched.Select(m => m.Id));
+            var alien = library.First(m => m.Name == "Alien");
+
+            var baselineRecs = _engine.GenerateRecommendations(
+                _testUserId, userProfile, embeddings, metadata, _config, maxResults: 10);
+            var alienBaseline = baselineRecs.FirstOrDefault(r => r.ItemId == alien.Id);
+            alienBaseline.Should().NotBeNull();
+
+            var prefs = new UserPreferences();
+            prefs.GenreWeights["Horror"] = 0.0f; // clamped to 0.1 at scoring time
+            _preferencesService.SavePreferences(_testUserId, prefs);
+
+            var suppressedRecs = _engine.GenerateRecommendations(
+                _testUserId, userProfile, embeddings, metadata, _config, maxResults: 10);
+            var alienSuppressed = suppressedRecs.First(r => r.ItemId == alien.Id);
+
+            alienSuppressed.Score.Should().BeLessThan(alienBaseline!.Score,
+                "a near-zero genre weight must reduce the item's final score");
         }
 
         #endregion

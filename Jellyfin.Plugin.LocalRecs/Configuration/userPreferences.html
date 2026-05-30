@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>My Recommendation Preferences</title>
+</head>
+<body>
+<div id="LocalRecsPreferencesPage"
+     data-role="page"
+     class="page type-interior withSections"
+     data-require="emby-input,emby-button">
+    <div data-role="content">
+        <div class="content-primary">
+
+            <h1 class="sectionTitle">My Recommendation Preferences</h1>
+            <p style="opacity:0.7;font-size:0.9em;">
+                Bookmark this page:
+                <code>/web/configurationpage?name=LocalRecommendationsPreferences</code>
+            </p>
+
+            <!-- Excluded Items -->
+            <h2 class="sectionTitle" style="margin-top:1.5em;">Excluded Items</h2>
+            <p>Search for movies or TV shows you never want recommended.</p>
+
+            <div class="inputContainer">
+                <label class="inputLabel inputLabelUnfocused" for="lrSearchExclude">Search:</label>
+                <input is="emby-input" type="text" id="lrSearchExclude"
+                       placeholder="Start typing a title..." autocomplete="off" />
+            </div>
+            <div id="lrSearchResults" style="margin:0.5em 0;"></div>
+
+            <h3 style="font-size:1em;margin-top:1.5em;">Currently Excluded</h3>
+            <div id="lrExcludedList"></div>
+
+            <!-- Genre Weights -->
+            <h2 class="sectionTitle" style="margin-top:2em;">Genre Weights</h2>
+            <p>
+                Boost (&gt;1.0) or suppress (&lt;1.0) recommendations from specific genres.
+                Changes take effect after the next recommendation refresh.
+            </p>
+            <div id="lrGenreWeightsList"></div>
+            <div style="margin-top:1em;display:flex;align-items:center;gap:1em;">
+                <button is="emby-button" type="button" id="lrSaveGenreWeights"
+                        class="raised button-submit">Save Genre Weights</button>
+                <span id="lrSaveStatus" style="opacity:0.7;"></span>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript">
+(function () {
+    'use strict';
+
+    var LocalRecsPrefs = {
+        page: null,
+        currentPrefs: { excludedItemIds: [], genreWeights: {} },
+
+        init: function (page) {
+            var self = this;
+            self.page = page;
+
+            ApiClient.getJSON(ApiClient.getUrl('LocalRecs/Preferences'))
+                .then(function (prefs) {
+                    self.currentPrefs = prefs;
+                    self.renderExcludedList();
+                    self.loadGenres();
+                })
+                .catch(function () {
+                    self.renderExcludedList();
+                    self.loadGenres();
+                });
+
+            self.initSearch();
+
+            page.querySelector('#lrSaveGenreWeights')
+                .addEventListener('click', function () { self.saveGenreWeights(); });
+        },
+
+        // ── Excluded Items ────────────────────────────────────────────────
+
+        renderExcludedList: function () {
+            var self = this;
+            var container = self.page.querySelector('#lrExcludedList');
+            while (container.firstChild) { container.removeChild(container.firstChild); }
+
+            var ids = (self.currentPrefs.excludedItemIds || []);
+            if (ids.length === 0) {
+                var empty = document.createElement('p');
+                empty.textContent = 'No items excluded.';
+                empty.style.opacity = '0.6';
+                container.appendChild(empty);
+                return;
+            }
+
+            ids.forEach(function (itemId) {
+                ApiClient.getJSON(ApiClient.getUrl('Items/' + itemId))
+                    .then(function (item) {
+                        self.appendExclusionRow(container, itemId, item.Name, item.Type);
+                    })
+                    .catch(function () {
+                        self.appendExclusionRow(container, itemId, itemId, 'unknown');
+                    });
+            });
+        },
+
+        appendExclusionRow: function (container, itemId, name, type) {
+            var self = this;
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:.75em;margin:.35em 0;' +
+                'padding:.5em .75em;background:rgba(255,255,255,.05);border-radius:4px;';
+
+            var nameSpan = document.createElement('span');
+            nameSpan.style.flex = '1';
+            nameSpan.textContent = name;
+            row.appendChild(nameSpan);
+
+            var typeSpan = document.createElement('span');
+            typeSpan.style.cssText = 'opacity:.5;font-size:.85em;';
+            typeSpan.textContent = type || '';
+            row.appendChild(typeSpan);
+
+            var removeBtn = document.createElement('button');
+            removeBtn.setAttribute('is', 'emby-button');
+            removeBtn.textContent = '×';
+            removeBtn.style.cssText = 'min-width:2em;padding:0 .5em;';
+            removeBtn.addEventListener('click', function () { self.removeExclusion(itemId); });
+            row.appendChild(removeBtn);
+
+            container.appendChild(row);
+        },
+
+        initSearch: function () {
+            var self = this;
+            var input = self.page.querySelector('#lrSearchExclude');
+            var results = self.page.querySelector('#lrSearchResults');
+            var timer = null;
+
+            input.addEventListener('input', function () {
+                clearTimeout(timer);
+                var term = input.value.trim();
+                if (term.length < 2) {
+                    while (results.firstChild) { results.removeChild(results.firstChild); }
+                    return;
+                }
+                timer = setTimeout(function () { self.searchItems(term, results, input); }, 300);
+            });
+        },
+
+        searchItems: function (term, container, input) {
+            var self = this;
+            var url = ApiClient.getUrl('Items', {
+                searchTerm: term,
+                IncludeItemTypes: 'Movie,Series',
+                Limit: 10,
+                Recursive: true,
+                userId: ApiClient.getCurrentUserId()
+            });
+
+            ApiClient.getJSON(url)
+                .then(function (result) {
+                    while (container.firstChild) { container.removeChild(container.firstChild); }
+                    var items = result.Items || [];
+                    if (items.length === 0) {
+                        var none = document.createElement('p');
+                        none.textContent = 'No results.';
+                        none.style.opacity = '0.6';
+                        container.appendChild(none);
+                        return;
+                    }
+                    items.forEach(function (item) {
+                        var row = document.createElement('div');
+                        row.style.cssText = 'display:flex;align-items:center;gap:.75em;margin:.3em 0;' +
+                            'padding:.5em .75em;background:rgba(255,255,255,.03);border-radius:4px;cursor:pointer;';
+
+                        row.addEventListener('mouseenter', function () {
+                            row.style.background = 'rgba(255,255,255,.08)';
+                        });
+                        row.addEventListener('mouseleave', function () {
+                            row.style.background = 'rgba(255,255,255,.03)';
+                        });
+
+                        var nameSpan = document.createElement('span');
+                        nameSpan.style.flex = '1';
+                        nameSpan.textContent = item.Name || '';
+                        row.appendChild(nameSpan);
+
+                        var typeSpan = document.createElement('span');
+                        typeSpan.style.cssText = 'opacity:.5;font-size:.85em;';
+                        typeSpan.textContent = item.Type || '';
+                        row.appendChild(typeSpan);
+
+                        var yearSpan = document.createElement('span');
+                        yearSpan.style.cssText = 'opacity:.5;font-size:.85em;';
+                        yearSpan.textContent = item.ProductionYear ? String(item.ProductionYear) : '';
+                        row.appendChild(yearSpan);
+
+                        row.addEventListener('click', function () {
+                            input.value = '';
+                            while (container.firstChild) { container.removeChild(container.firstChild); }
+                            self.addExclusion(item.Id);
+                        });
+                        container.appendChild(row);
+                    });
+                })
+                .catch(function (e) { console.error('LocalRecs search failed:', e); });
+        },
+
+        addExclusion: function (itemId) {
+            var self = this;
+            ApiClient.ajax({
+                type: 'POST',
+                url: ApiClient.getUrl('LocalRecs/Preferences/Exclusions'),
+                data: JSON.stringify({ itemId: itemId }),
+                contentType: 'application/json'
+            }).then(function (r) {
+                return r && r.json ? r.json() : (typeof r === 'string' ? JSON.parse(r) : r);
+            }).then(function (prefs) {
+                self.currentPrefs = prefs;
+                self.renderExcludedList();
+            }).catch(function (e) { console.error('Failed to add exclusion:', e); });
+        },
+
+        removeExclusion: function (itemId) {
+            var self = this;
+            ApiClient.ajax({
+                type: 'DELETE',
+                url: ApiClient.getUrl('LocalRecs/Preferences/Exclusions/' + itemId)
+            }).then(function (r) {
+                return r && r.json ? r.json() : (typeof r === 'string' ? JSON.parse(r) : r);
+            }).then(function (prefs) {
+                self.currentPrefs = prefs;
+                self.renderExcludedList();
+            }).catch(function (e) { console.error('Failed to remove exclusion:', e); });
+        },
+
+        // ── Genre Weights ─────────────────────────────────────────────────
+
+        loadGenres: function () {
+            var self = this;
+            var url = ApiClient.getUrl('Genres', {
+                userId: ApiClient.getCurrentUserId(),
+                IncludeItemTypes: 'Movie,Series'
+            });
+            ApiClient.getJSON(url)
+                .then(function (result) { self.renderGenreSliders(result.Items || []); })
+                .catch(function (e) { console.error('Failed to load genres:', e); });
+        },
+
+        renderGenreSliders: function (genres) {
+            var self = this;
+            var container = self.page.querySelector('#lrGenreWeightsList');
+            while (container.firstChild) { container.removeChild(container.firstChild); }
+
+            if (genres.length === 0) {
+                var none = document.createElement('p');
+                none.textContent = 'No genres found in your library.';
+                none.style.opacity = '0.6';
+                container.appendChild(none);
+                return;
+            }
+
+            genres.forEach(function (genre) {
+                var weights = self.currentPrefs.genreWeights || {};
+                var current = (weights[genre.Name] !== undefined) ? weights[genre.Name] : 1.0;
+
+                var row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:center;gap:1em;margin:.5em 0;';
+
+                var label = document.createElement('label');
+                label.style.cssText = 'min-width:130px;';
+                label.textContent = genre.Name;
+                row.appendChild(label);
+
+                var slider = document.createElement('input');
+                slider.type = 'range';
+                slider.min = '0';
+                slider.max = '3';
+                slider.step = '0.1';
+                slider.value = String(current);
+                slider.dataset.genre = genre.Name;
+                slider.style.flex = '1';
+                row.appendChild(slider);
+
+                var display = document.createElement('span');
+                display.style.cssText = 'min-width:3.5em;text-align:right;font-family:monospace;';
+                display.textContent = parseFloat(current).toFixed(1) + '×';
+                row.appendChild(display);
+
+                slider.addEventListener('input', function () {
+                    display.textContent = parseFloat(slider.value).toFixed(1) + '×';
+                });
+
+                container.appendChild(row);
+            });
+        },
+
+        saveGenreWeights: function () {
+            var self = this;
+            var sliders = self.page.querySelectorAll('#lrGenreWeightsList input[type=range]');
+            var weights = {};
+            sliders.forEach(function (s) {
+                var val = parseFloat(s.value);
+                if (val !== 1.0) {
+                    weights[s.dataset.genre] = val;
+                }
+            });
+
+            ApiClient.ajax({
+                type: 'PUT',
+                url: ApiClient.getUrl('LocalRecs/Preferences/GenreWeights'),
+                data: JSON.stringify({ weights: weights }),
+                contentType: 'application/json'
+            }).then(function (r) {
+                return r && r.json ? r.json() : (typeof r === 'string' ? JSON.parse(r) : r);
+            }).then(function (prefs) {
+                self.currentPrefs = prefs;
+                var status = self.page.querySelector('#lrSaveStatus');
+                status.style.color = '';
+                status.textContent = 'Saved!';
+                setTimeout(function () { status.textContent = ''; }, 2000);
+            }).catch(function (e) {
+                console.error('Failed to save genre weights:', e);
+                var status = self.page.querySelector('#lrSaveStatus');
+                status.style.color = '#ff5252';
+                status.textContent = 'Save failed — check the browser console.';
+            });
+        }
+    };
+
+    document.addEventListener('viewshow', function (e) {
+        var page = e.target;
+        if (page && page.id === 'LocalRecsPreferencesPage') {
+            LocalRecsPrefs.init(page);
+        }
+    });
+}());
+</script>
+</body>
+</html>

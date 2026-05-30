@@ -1,0 +1,100 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          VERSION_FULL="${VERSION}.0"
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "version_full=${VERSION_FULL}" >> "${GITHUB_OUTPUT}"
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        env:
+          VERSION_FULL: ${{ steps.version.outputs.version_full }}
+        run: |
+          dotnet build \
+            --configuration Release \
+            --no-restore \
+            -p:Version="${VERSION_FULL}" \
+            -p:AssemblyVersion="${VERSION_FULL}" \
+            -p:FileVersion="${VERSION_FULL}"
+
+      - name: Test
+        run: dotnet test --configuration Release --no-build --verbosity normal
+
+      - name: Package
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ZIP_NAME="jellyfin-plugin-localrecs-v${VERSION}.zip"
+          DLL="Jellyfin.Plugin.LocalRecs/bin/Release/net9.0/Jellyfin.Plugin.LocalRecs.dll"
+          zip "${ZIP_NAME}" -j "${DLL}"
+          MD5=$(md5sum "${ZIP_NAME}" | cut -d' ' -f1)
+          echo "zip_name=${ZIP_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "checksum=${MD5}" >> "${GITHUB_OUTPUT}"
+
+      - name: Update manifest.json and csproj
+        env:
+          VERSION_FULL: ${{ steps.version.outputs.version_full }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          python3 scripts/update-manifest.py \
+            --version "${VERSION_FULL}" \
+            --checksum "${CHECKSUM}" \
+            --tag "${TAG}"
+
+          CSPROJ="Jellyfin.Plugin.LocalRecs/Jellyfin.Plugin.LocalRecs.csproj"
+          sed -i "s|<Version>.*</Version>|<Version>${VERSION_FULL}</Version>|" "${CSPROJ}"
+          sed -i "s|<AssemblyVersion>.*</AssemblyVersion>|<AssemblyVersion>${VERSION_FULL}</AssemblyVersion>|" "${CSPROJ}"
+          sed -i "s|<FileVersion>.*</FileVersion>|<FileVersion>${VERSION_FULL}</FileVersion>|" "${CSPROJ}"
+
+      - name: Commit updated files back to main
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest.json Jellyfin.Plugin.LocalRecs/Jellyfin.Plugin.LocalRecs.csproj
+          git commit -m "chore: release ${TAG}"
+          git push origin HEAD:main
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          ZIP_NAME: ${{ steps.package.outputs.zip_name }}
+        run: |
+          gh release create "${TAG}" \
+            "${ZIP_NAME}" \
+            --title "v${TAG#v}" \
+            --notes-file RELEASE_NOTES.md \
+            --latest

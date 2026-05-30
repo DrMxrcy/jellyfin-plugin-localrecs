@@ -42,6 +42,15 @@ namespace Jellyfin.Plugin.LocalRecs
                     cacheDir);
             });
 
+            serviceCollection.AddSingleton(sp =>
+            {
+                var appPaths = sp.GetRequiredService<IApplicationPaths>();
+                var dataDir = Path.Combine(appPaths.PluginsPath, "LocalRecs");
+                return new UserPreferencesService(
+                    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<UserPreferencesService>>(),
+                    dataDir);
+            });
+
             serviceCollection.AddSingleton<RecommendationRefreshService>();
 
             // Phase 7: Virtual Library Services

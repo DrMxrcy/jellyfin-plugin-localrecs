@@ -23,18 +23,22 @@ namespace Jellyfin.Plugin.LocalRecs.Services
     {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<RecommendationEngine> _logger;
+        private readonly UserPreferencesService _userPreferencesService;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="RecommendationEngine"/> class.
         /// </summary>
         /// <param name="logger">The logger.</param>
         /// <param name="scopeFactory">Service scope factory for resolving scoped dependencies per call.</param>
+        /// <param name="userPreferencesService">Per-user preference service for exclusions and genre weights.</param>
         public RecommendationEngine(
             ILogger<RecommendationEngine> logger,
-            IServiceScopeFactory scopeFactory)
+            IServiceScopeFactory scopeFactory,
+            UserPreferencesService userPreferencesService)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
+            _userPreferencesService = userPreferencesService ?? throw new ArgumentNullException(nameof(userPreferencesService));
         }
 
         /// <summary>
@@ -63,6 +67,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             var libraryManager = scope.ServiceProvider.GetRequiredService<ILibraryManager>();
             var userDataManager = scope.ServiceProvider.GetRequiredService<IUserDataManager>();
             var userManager = scope.ServiceProvider.GetRequiredService<IUserManager>();
+            var prefs = _userPreferencesService.GetPreferences(userId);
 
             if (embeddings == null)
             {
@@ -108,7 +113,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             }
 
             // Get unwatched candidates
-            var candidates = GetUnwatchedCandidates(userId, embeddings.Keys, metadata, mediaType, config, userManager, userDataManager, libraryManager);
+            var candidates = GetUnwatchedCandidates(userId, embeddings.Keys, metadata, mediaType, config, prefs, userManager, userDataManager, libraryManager);
 
             if (candidates.Count == 0)
             {
@@ -136,7 +141,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     continue; // Skip if no metadata
                 }
 
-                var score = ScoreCandidate(userProfile, embedding, itemMetadata, config);
+                var score = ScoreCandidate(userProfile, embedding, itemMetadata, config, prefs);
 
                 scoredCandidates.Add(score);
             }
@@ -199,6 +204,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             IReadOnlyDictionary<Guid, MediaItemMetadata> metadata,
             LocalMediaType? mediaType,
             PluginConfiguration config,
+            UserPreferences prefs,
             IUserManager userManager,
             IUserDataManager userDataManager,
             ILibraryManager libraryManager)
@@ -298,6 +304,11 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                     continue;
                 }
 
+                if (prefs.ExcludedItemIds.Contains(itemId))
+                {
+                    continue;
+                }
+
                 candidates.Add(itemId);
             }
 
@@ -341,49 +352,49 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             UserProfile userProfile,
             ItemEmbedding candidateEmbedding,
             MediaItemMetadata itemMetadata,
-            PluginConfiguration config)
+            PluginConfiguration config,
+            UserPreferences prefs)
         {
-            // Compute cosine similarity between user taste vector and item embedding
             var cosineSimilarity = VectorMath.CosineSimilarity(
                 userProfile.TasteVector,
                 candidateEmbedding.Vector);
 
-            // If rating proximity is disabled, return pure cosine similarity
+            double baseScore;
             if (!config.EnableRatingProximity)
             {
-                return new ScoredRecommendation(candidateEmbedding.ItemId, cosineSimilarity);
+                baseScore = cosineSimilarity;
             }
-
-            // Compute rating proximity components
-            double communityProximity = 0.5; // neutral default
-            double criticProximity = 0.5;    // neutral default
-
-            // Community rating proximity (if both user and item have community ratings)
-            if (itemMetadata.CommunityRating.HasValue && userProfile.AverageCommunityRating.HasValue)
+            else
             {
-                var diff = Math.Abs(itemMetadata.CommunityRating.Value - userProfile.AverageCommunityRating.Value);
+                double communityProximity = 0.5;
+                double criticProximity = 0.5;
 
-                // Community rating is 0-10 scale
-                communityProximity = Math.Max(0, 1.0 - (diff / 10.0));
+                if (itemMetadata.CommunityRating.HasValue && userProfile.AverageCommunityRating.HasValue)
+                {
+                    var diff = Math.Abs(itemMetadata.CommunityRating.Value - userProfile.AverageCommunityRating.Value);
+                    communityProximity = Math.Max(0, 1.0 - (diff / 10.0));
+                }
+
+                if (itemMetadata.CriticRating.HasValue && userProfile.AverageCriticRating.HasValue)
+                {
+                    var diff = Math.Abs(itemMetadata.CriticRating.Value - userProfile.AverageCriticRating.Value);
+                    criticProximity = Math.Max(0, 1.0 - (diff / 100.0));
+                }
+
+                var ratingProximity = (communityProximity + criticProximity) / 2.0;
+                baseScore = ((1 - config.RatingProximityWeight) * cosineSimilarity)
+                          + (config.RatingProximityWeight * ratingProximity);
             }
 
-            // Critic rating proximity (if both user and item have critic ratings)
-            if (itemMetadata.CriticRating.HasValue && userProfile.AverageCriticRating.HasValue)
+            float genreMultiplier = 1.0f;
+            foreach (var genre in itemMetadata.Genres)
             {
-                var diff = Math.Abs(itemMetadata.CriticRating.Value - userProfile.AverageCriticRating.Value);
-
-                // Critic rating is 0-100 scale
-                criticProximity = Math.Max(0, 1.0 - (diff / 100.0));
+                if (prefs.GenreWeights.TryGetValue(genre, out var w))
+                    genreMultiplier *= w;
             }
+            genreMultiplier = Math.Clamp(genreMultiplier, 0.1f, 3.0f);
 
-            // Average the two rating proximities
-            var ratingProximity = (communityProximity + criticProximity) / 2.0;
-
-            // Blend cosine similarity with rating proximity
-            var finalScore = ((1 - config.RatingProximityWeight) * cosineSimilarity)
-                           + (config.RatingProximityWeight * ratingProximity);
-
-            return new ScoredRecommendation(candidateEmbedding.ItemId, (float)finalScore);
+            return new ScoredRecommendation(candidateEmbedding.ItemId, (float)(baseScore * genreMultiplier));
         }
 
         /// <summary>

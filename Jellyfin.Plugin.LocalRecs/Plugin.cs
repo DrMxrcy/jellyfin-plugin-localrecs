@@ -55,6 +55,11 @@ namespace Jellyfin.Plugin.LocalRecs
                 {
                     Name = this.Name,
                     EmbeddedResourcePath = string.Format("{0}.Configuration.configPage.html", GetType().Namespace)
+                },
+                new PluginPageInfo
+                {
+                    Name = "LocalRecommendationsPreferences",
+                    EmbeddedResourcePath = string.Format("{0}.Configuration.userPreferences.html", GetType().Namespace)
                 }
             };
         }
