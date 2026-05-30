@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Recent watch emphasis replaces rewatch boost** (#20). Weighting now uses a decay² amplification formula (`decay × (1 + recentWatchBoost × decay)`) instead of a logarithmic play-count multiplier. Items watched recently get up to `(1 + recentWatchBoost)×` weight; items watched long ago get near-zero additional boost. Configured via `RecentWatchBoost` (default 1.0, replaces `RewatchBoost`).
+- **TV series recency now uses the most-recently-watched episode date** (#19). Previously, series decay was calculated from `DateTime.UtcNow`, making all series appear equally "recent". Now uses the actual `LastPlayedDate` of the most recently watched episode.
+
+### Fixed
+
+- **Jellyfin 10.11.9 compatibility** (#17). `IUserManager.Users` was removed in 10.11.9; replaced with `GetUsers()` in all call sites. Jellyfin package references bumped to 10.11.9 and `targetAbi` updated to `10.11.9.0`.
+- **`ObjectDisposedException` during recommendation refresh** (#16). `RecommendationEngine` and `UserProfileService` are singletons that previously captured `ILibraryManager`, `IUserDataManager`, and `IUserManager` at construction time. On Jellyfin 10.11.8+, these are backed by scoped EF Core `DbContext` instances that get disposed between requests. Both services now use `IServiceScopeFactory` to resolve fresh service instances per call.
+- **Artwork symlink unit test** (#18). Fixed `SyncRecommendations_SymlinksArtworkFromSourceFolder` by populating `ImageInfos` on the mock `Movie` item so the test correctly exercises artwork discovery.
+
 ## [0.6.0] - 2026-04-15
 
 ### Changed
