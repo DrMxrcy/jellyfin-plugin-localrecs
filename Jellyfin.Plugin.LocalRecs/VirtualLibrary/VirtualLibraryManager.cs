@@ -160,11 +160,14 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
             MediaType mediaType)
         {
             var libraryPath = GetUserLibraryPath(userId, mediaType);
-
-            ClearRecommendationsInternal(userId, mediaType);
             Directory.CreateDirectory(libraryPath);
 
+            // Build the set of folder names that should exist after this sync.
+            // Only create folders that don't already exist — preserving existing symlinks
+            // prevents Jellyfin from logging "pruning extracted data" on every refresh.
+            var desiredFolderNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var createdCount = 0;
+
             foreach (var rec in recommendations)
             {
                 try
@@ -182,16 +185,23 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                         continue;
                     }
 
-                    if (item is Series series)
-                    {
-                        CreateSeriesStructure(libraryPath, series);
-                    }
-                    else
-                    {
-                        CreateMovieFolderStructure(libraryPath, item);
-                    }
+                    var folderName = GenerateFolderName(item);
+                    desiredFolderNames.Add(folderName);
 
-                    createdCount++;
+                    var folderPath = Path.Combine(libraryPath, folderName);
+                    if (!Directory.Exists(folderPath))
+                    {
+                        if (item is Series series)
+                        {
+                            CreateSeriesStructure(libraryPath, series);
+                        }
+                        else
+                        {
+                            CreateMovieFolderStructure(libraryPath, item);
+                        }
+
+                        createdCount++;
+                    }
                 }
                 catch (UnauthorizedAccessException ex)
                 {
@@ -207,40 +217,38 @@ namespace Jellyfin.Plugin.LocalRecs.VirtualLibrary
                 }
             }
 
+            // Delete stale entries that are no longer in the recommendations list.
+            var removedCount = 0;
+            foreach (var existingDir in Directory.GetDirectories(libraryPath))
+            {
+                var dirName = Path.GetFileName(existingDir);
+                if (dirName != null && !desiredFolderNames.Contains(dirName))
+                {
+                    try
+                    {
+                        Directory.Delete(existingDir, recursive: true);
+                        removedCount++;
+                    }
+                    catch (IOException ex)
+                    {
+                        _logger.LogError(ex, "Failed to remove stale recommendation directory: {Path}", existingDir);
+                    }
+                    catch (UnauthorizedAccessException ex)
+                    {
+                        _logger.LogError(ex, "Failed to remove stale recommendation directory (access denied): {Path}", existingDir);
+                    }
+                }
+            }
+
             _logger.LogDebug(
-                "Updated {MediaType} recommendations for user {UserId}: {Created} items created",
+                "Synced {MediaType} recommendations for user {UserId}: {Created} created, {Removed} removed, {Total} total",
                 mediaType,
                 userId,
-                createdCount);
+                createdCount,
+                removedCount,
+                desiredFolderNames.Count);
 
-            return createdCount;
-        }
-
-        private void ClearRecommendationsInternal(Guid userId, MediaType mediaType)
-        {
-            var libraryPath = GetUserLibraryPath(userId, mediaType);
-
-            if (!Directory.Exists(libraryPath))
-            {
-                return;
-            }
-
-            try
-            {
-                Directory.Delete(libraryPath, recursive: true);
-                _logger.LogDebug(
-                    "Cleared all {MediaType} items for user {UserId}",
-                    mediaType,
-                    userId);
-            }
-            catch (IOException ex)
-            {
-                _logger.LogError(ex, "Failed to delete virtual library directory (IO error): {Path}", libraryPath);
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                _logger.LogError(ex, "Failed to delete virtual library directory (access denied): {Path}", libraryPath);
-            }
+            return desiredFolderNames.Count;
         }
 
         private void CreateMovieFolderStructure(string libraryPath, BaseItem item)

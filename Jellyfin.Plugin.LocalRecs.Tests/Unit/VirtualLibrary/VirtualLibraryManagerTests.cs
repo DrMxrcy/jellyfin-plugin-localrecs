@@ -254,7 +254,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Unit.VirtualLibrary
         }
 
         [Fact]
-        public void SyncRecommendations_ClearsOldRecommendationsBeforeCreatingNew()
+        public void SyncRecommendations_RemovesStaleEntriesOnReconcile()
         {
             if (!CanCreateSymlinks())
             {
