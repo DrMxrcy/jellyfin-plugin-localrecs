@@ -86,5 +86,4 @@ namespace Jellyfin.Plugin.LocalRecs.Api
             });
         }
     }
-
 }

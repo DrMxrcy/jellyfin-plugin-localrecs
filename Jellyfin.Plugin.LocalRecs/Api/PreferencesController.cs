@@ -136,5 +136,4 @@ namespace Jellyfin.Plugin.LocalRecs.Api
             return Guid.TryParse(claim, out userId);
         }
     }
-
 }

@@ -194,6 +194,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <param name="metadata">Item metadata dictionary.</param>
         /// <param name="mediaType">Filter to specific media type.</param>
         /// <param name="config">Plugin configuration.</param>
+        /// <param name="prefs">The calling user's recommendation preferences.</param>
         /// <param name="userManager">The user manager.</param>
         /// <param name="userDataManager">The user data manager.</param>
         /// <param name="libraryManager">The library manager.</param>
@@ -347,6 +348,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <param name="candidateEmbedding">The candidate item's embedding.</param>
         /// <param name="itemMetadata">The candidate item's metadata.</param>
         /// <param name="config">Plugin configuration.</param>
+        /// <param name="prefs">The calling user's recommendation preferences.</param>
         /// <returns>Scored recommendation.</returns>
         private ScoredRecommendation ScoreCandidate(
             UserProfile userProfile,
