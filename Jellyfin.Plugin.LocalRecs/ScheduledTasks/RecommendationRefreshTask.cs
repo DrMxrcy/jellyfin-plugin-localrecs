@@ -30,6 +30,11 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
         /// <summary>
         /// Initializes a new instance of the <see cref="RecommendationRefreshTask"/> class.
         /// </summary>
+        /// <param name="logger">Logger instance.</param>
+        /// <param name="userManager">User manager for listing all users.</param>
+        /// <param name="refreshService">Service that computes embeddings and recommendations.</param>
+        /// <param name="virtualLibraryManager">Manages virtual library symlinks.</param>
+        /// <param name="libraryManager">Jellyfin library manager for triggering scans.</param>
         public RecommendationRefreshTask(
             ILogger<RecommendationRefreshTask> logger,
             IUserManager userManager,
@@ -140,7 +145,7 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                     .Select(e =>
                     {
                         var username = users.FirstOrDefault(u => u.Id == e.UserId)?.Username ?? e.UserId.ToString();
-                        return (e.UserId, username, e.Error.Message);
+                        return (UserId: e.UserId, Username: username, Error: e.Error.Message);
                     })
                     .Concat(failedSyncUsers)
                     .ToList();
@@ -153,8 +158,10 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
                     duration.TotalSeconds, successfulUsers, users.Count);
 
                 if (allErrors.Count > 0)
+                {
                     _logger.LogWarning("Failed for {Count} users: {Users}",
-                        allErrors.Count, string.Join(", ", allErrors.Select(e => e.username)));
+                        allErrors.Count, string.Join(", ", allErrors.Select(e => e.Username)));
+                }
 
                 progress?.Report(100);
             }
@@ -195,7 +202,9 @@ namespace Jellyfin.Plugin.LocalRecs.ScheduledTasks
             {
                 var dataDir = Plugin.Instance?.DataFolderPath;
                 if (dataDir == null)
+                {
                     return;
+                }
 
                 var failedUsers = errors.Select(e => new
                 {

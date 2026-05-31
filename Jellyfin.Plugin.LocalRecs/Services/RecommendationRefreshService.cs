@@ -26,6 +26,13 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <summary>
         /// Initializes a new instance of the <see cref="RecommendationRefreshService"/> class.
         /// </summary>
+        /// <param name="logger">Logger instance.</param>
+        /// <param name="libraryAnalysisService">Reads media items from the Jellyfin library.</param>
+        /// <param name="vocabularyBuilder">Builds the TF-IDF vocabulary from library metadata.</param>
+        /// <param name="embeddingService">Computes TF-IDF embeddings for library items.</param>
+        /// <param name="userProfileService">Builds per-user watch profiles.</param>
+        /// <param name="recommendationEngine">Scores and ranks recommendations for a user.</param>
+        /// <param name="embeddingCacheService">Caches embeddings to disk to skip recomputation.</param>
         public RecommendationRefreshService(
             ILogger<RecommendationRefreshService> logger,
             LibraryAnalysisService libraryAnalysisService,
@@ -47,7 +54,7 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <summary>
         /// Computes embeddings for the library, using the on-disk cache when the library hasn't changed.
         /// </summary>
-        /// <returns>Embeddings, metadata, whether the cache was used, and the item count.</returns>
+        /// <returns>A tuple of embeddings, metadata, whether the cache was used, and the item count.</returns>
         public (IReadOnlyDictionary<Guid, ItemEmbedding> Embeddings, IReadOnlyDictionary<Guid, MediaItemMetadata> Metadata, bool Cached, int ItemCount) ComputeEmbeddings()
         {
             var library = _libraryAnalysisService.GetAllMediaItems();
@@ -56,7 +63,9 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             var fingerprint = _embeddingCacheService.ComputeFingerprint(library);
             var cached = _embeddingCacheService.TryLoadCache(fingerprint);
             if (cached != null)
+            {
                 return (cached, metadata, true, library.Count);
+            }
 
             _logger.LogInformation("Recomputed embeddings ({Count} items)", library.Count);
 
@@ -78,6 +87,11 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// Generates recommendations for a single user. Throws on failure so the multi-user
         /// loop can collect per-user errors without aborting other users.
         /// </summary>
+        /// <param name="userId">The user to generate recommendations for.</param>
+        /// <param name="embeddings">Pre-computed item embeddings for the full library.</param>
+        /// <param name="metadata">Pre-loaded metadata keyed by item ID.</param>
+        /// <param name="config">Plugin configuration.</param>
+        /// <returns>A tuple of scored movie and TV recommendations for the user.</returns>
         public (List<ScoredRecommendation> Movies, List<ScoredRecommendation> Tv) GenerateRecommendationsForUser(
             Guid userId,
             IReadOnlyDictionary<Guid, ItemEmbedding> embeddings,
@@ -106,6 +120,9 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// Per-user failures are collected in the result's <see cref="MultiUserRefreshResult.Errors"/> list
         /// rather than aborting the run.
         /// </summary>
+        /// <param name="userIds">The users to generate recommendations for.</param>
+        /// <param name="config">Plugin configuration.</param>
+        /// <returns>A <see cref="MultiUserRefreshResult"/> containing per-user recommendations and any errors.</returns>
         public Task<MultiUserRefreshResult> GenerateRecommendationsForMultipleUsersAsync(
             IEnumerable<Guid> userIds,
             PluginConfiguration config)
@@ -114,7 +131,9 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             var userIdList = userIds.ToList();
 
             if (userIdList.Count == 0)
+            {
                 return Task.FromResult(result);
+            }
 
             _logger.LogInformation("Generating recommendations for {Count} users", userIdList.Count);
 

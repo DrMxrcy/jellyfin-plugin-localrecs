@@ -43,7 +43,9 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         public ActionResult<UserPreferences> GetPreferences()
         {
             if (!TryGetUserId(out var userId))
+            {
                 return Unauthorized();
+            }
 
             return Ok(_preferencesService.GetPreferences(userId));
         }
@@ -58,10 +60,14 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         public ActionResult<UserPreferences> AddExclusion([FromBody] AddExclusionRequest request)
         {
             if (request?.ItemId == Guid.Empty)
+            {
                 return BadRequest("ItemId is required");
+            }
 
             if (!TryGetUserId(out var userId))
+            {
                 return Unauthorized();
+            }
 
             var prefs = _preferencesService.GetPreferences(userId);
             prefs.ExcludedItemIds.Add(request!.ItemId);
@@ -79,7 +85,9 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         public ActionResult<UserPreferences> RemoveExclusion(Guid itemId)
         {
             if (!TryGetUserId(out var userId))
+            {
                 return Unauthorized();
+            }
 
             var prefs = _preferencesService.GetPreferences(userId);
             prefs.ExcludedItemIds.Remove(itemId);
@@ -101,10 +109,14 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         public ActionResult<UserPreferences> UpdateGenreWeights([FromBody] UpdateGenreWeightsRequest request)
         {
             if (request?.Weights == null)
+            {
                 return BadRequest("Weights is required");
+            }
 
             if (!TryGetUserId(out var userId))
+            {
                 return Unauthorized();
+            }
 
             var prefs = _preferencesService.GetPreferences(userId);
             prefs.GenreWeights = new Dictionary<string, float>();
@@ -125,17 +137,4 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         }
     }
 
-    /// <summary>Request body for adding an item exclusion.</summary>
-    public class AddExclusionRequest
-    {
-        /// <summary>Gets or sets the Jellyfin item ID to exclude.</summary>
-        public Guid ItemId { get; set; }
-    }
-
-    /// <summary>Request body for updating genre weights.</summary>
-    public class UpdateGenreWeightsRequest
-    {
-        /// <summary>Gets or sets genre name → multiplier map. Values outside [0.0, 3.0] are clamped.</summary>
-        public Dictionary<string, float> Weights { get; set; } = new();
-    }
 }

@@ -29,6 +29,10 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         /// <summary>
         /// Initializes a new instance of the <see cref="SetupStatusController"/> class.
         /// </summary>
+        /// <param name="logger">Logger instance.</param>
+        /// <param name="libraryManager">Jellyfin library manager for reading virtual folders.</param>
+        /// <param name="userManager">User manager for listing all users.</param>
+        /// <param name="virtualLibraryManager">Provides virtual library paths per user.</param>
         public SetupStatusController(
             ILogger<SetupStatusController> logger,
             ILibraryManager libraryManager,
@@ -44,6 +48,7 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         /// <summary>
         /// Returns per-user directory existence and Jellyfin library linkage status.
         /// </summary>
+        /// <returns>A <see cref="SetupStatusResponse"/> with per-user directory and library linkage info.</returns>
         [HttpGet("SetupStatus")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         public ActionResult<SetupStatusResponse> GetSetupStatus()
@@ -82,38 +87,4 @@ namespace Jellyfin.Plugin.LocalRecs.Api
         }
     }
 
-    /// <summary>Response model for <see cref="SetupStatusController.GetSetupStatus"/>.</summary>
-    public class SetupStatusResponse
-    {
-        /// <summary>Gets or sets per-user setup status.</summary>
-        public List<UserSetupStatus> Users { get; set; } = new();
-
-        /// <summary>Gets or sets a value indicating whether the server is running on Windows.</summary>
-        public bool IsWindows { get; set; }
-    }
-
-    /// <summary>Setup status for a single user.</summary>
-    public class UserSetupStatus
-    {
-        /// <summary>Gets or sets the user ID as a string.</summary>
-        public string UserId { get; set; } = string.Empty;
-
-        /// <summary>Gets or sets the username.</summary>
-        public string Username { get; set; } = string.Empty;
-
-        /// <summary>Gets or sets a value indicating whether either directory exists.</summary>
-        public bool DirectoriesExist { get; set; }
-
-        /// <summary>Gets or sets the movies virtual library path.</summary>
-        public string MoviesPath { get; set; } = string.Empty;
-
-        /// <summary>Gets or sets a value indicating whether a Jellyfin library points at the movies path.</summary>
-        public bool MoviesLibraryLinked { get; set; }
-
-        /// <summary>Gets or sets the TV virtual library path.</summary>
-        public string TvPath { get; set; } = string.Empty;
-
-        /// <summary>Gets or sets a value indicating whether a Jellyfin library points at the TV path.</summary>
-        public bool TvLibraryLinked { get; set; }
-    }
 }

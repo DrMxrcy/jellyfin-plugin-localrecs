@@ -37,6 +37,8 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// Computes a SHA-256 fingerprint of the library by hashing sorted (ItemId, DateModified) pairs.
         /// A changed fingerprint means embeddings must be recomputed.
         /// </summary>
+        /// <param name="items">The library items to fingerprint.</param>
+        /// <returns>A lowercase hex SHA-256 hash of the sorted item identifiers and modification timestamps.</returns>
         public string ComputeFingerprint(IReadOnlyList<MediaItemMetadata> items)
         {
             var input = string.Join(",", items
@@ -50,10 +52,14 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <summary>
         /// Attempts to load cached embeddings. Returns null if the cache is absent, stale, or corrupt.
         /// </summary>
+        /// <param name="fingerprint">The expected library fingerprint; cache is rejected if it doesn't match.</param>
+        /// <returns>The cached embeddings, or null if the cache is missing, stale, or unreadable.</returns>
         public IReadOnlyDictionary<Guid, ItemEmbedding>? TryLoadCache(string fingerprint)
         {
             if (!File.Exists(CacheFilePath))
+            {
                 return null;
+            }
 
             try
             {
@@ -61,13 +67,17 @@ namespace Jellyfin.Plugin.LocalRecs.Services
                 var cache = JsonSerializer.Deserialize<EmbeddingCacheFile>(json);
 
                 if (cache == null || cache.Version != CacheVersion || cache.Fingerprint != fingerprint)
+                {
                     return null;
+                }
 
                 var result = new Dictionary<Guid, ItemEmbedding>(cache.Embeddings.Count);
                 foreach (var (key, vector) in cache.Embeddings)
                 {
                     if (Guid.TryParse(key, out var id))
+                    {
                         result[id] = new ItemEmbedding(id, vector);
+                    }
                 }
 
                 _logger.LogInformation("Using cached embeddings ({N} items)", result.Count);
@@ -83,6 +93,9 @@ namespace Jellyfin.Plugin.LocalRecs.Services
         /// <summary>
         /// Saves embeddings to the cache file. Errors are logged as warnings and swallowed (non-fatal).
         /// </summary>
+        /// <param name="fingerprint">The library fingerprint to associate with this cache entry.</param>
+        /// <param name="embeddings">The computed embeddings to persist.</param>
+        /// <param name="itemCount">The number of library items represented in the embeddings.</param>
         public void SaveCache(string fingerprint, IReadOnlyDictionary<Guid, ItemEmbedding> embeddings, int itemCount)
         {
             try

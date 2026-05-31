@@ -390,8 +390,11 @@ namespace Jellyfin.Plugin.LocalRecs.Services
             foreach (var genre in itemMetadata.Genres)
             {
                 if (prefs.GenreWeights.TryGetValue(genre, out var w))
+                {
                     genreMultiplier *= w;
+                }
             }
+
             genreMultiplier = Math.Clamp(genreMultiplier, 0.1f, 3.0f);
 
             return new ScoredRecommendation(candidateEmbedding.ItemId, (float)(baseScore * genreMultiplier));
