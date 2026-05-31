@@ -23,7 +23,7 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
     /// Jellyfin services but real plugin service implementations.
     /// </summary>
     [Trait("Category", "Integration")]
-    public class PipelineIntegrationTests
+    public class PipelineIntegrationTests : IDisposable
     {
         private readonly Mock<IUserDataManager> _mockUserDataManager;
         private readonly Mock<IUserManager> _mockUserManager;
@@ -31,12 +31,19 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
         private readonly PluginConfiguration _config;
         private readonly Guid _testUserId;
         private readonly User _testUser;
+        private readonly string _prefsDir;
+        private readonly UserPreferencesService _preferencesService;
 
         public PipelineIntegrationTests()
         {
             _mockUserDataManager = new Mock<IUserDataManager>();
             _mockUserManager = new Mock<IUserManager>();
             _mockLibraryManager = new Mock<ILibraryManager>();
+
+            _prefsDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), Guid.NewGuid().ToString());
+            _preferencesService = new UserPreferencesService(
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<UserPreferencesService>.Instance,
+                _prefsDir);
 
             _testUserId = Guid.NewGuid();
             _testUser = new User("TestUser", "Default", "Default");
@@ -83,7 +90,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
             // Generate recommendations (real service, mocked Jellyfin)
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -132,7 +140,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -180,7 +189,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -227,7 +237,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -266,7 +277,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             var stopwatch = Stopwatch.StartNew();
 
@@ -346,7 +358,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             // Act - Build profile (should return null for no watch history)
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, _config);
@@ -422,7 +435,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -477,7 +491,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             // Act
             var recommendations = engine.GenerateRecommendations(
@@ -554,7 +569,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             // Act & Assert - Should handle gracefully
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, configWithSmallHalfLife);
@@ -598,7 +614,8 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
 
             var engine = new RecommendationEngine(
                 NullLogger<RecommendationEngine>.Instance,
-                CreateScopeFactory());
+                CreateScopeFactory(),
+                _preferencesService);
 
             // Act & Assert
             var userProfile = profileService.BuildUserProfile(_testUserId, embeddings, configWithExtremeBoosts);
@@ -616,6 +633,15 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Integration
         #endregion
 
         #region Helper Methods
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            if (System.IO.Directory.Exists(_prefsDir))
+            {
+                System.IO.Directory.Delete(_prefsDir, recursive: true);
+            }
+        }
 
         private void SetupUserDataMocks(
             List<(MediaItemMetadata Item, bool IsFavorite, int PlayCount, int DaysAgo)> watchHistory,
