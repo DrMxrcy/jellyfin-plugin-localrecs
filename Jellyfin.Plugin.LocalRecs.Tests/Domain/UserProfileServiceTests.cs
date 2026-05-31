@@ -8,6 +8,7 @@ using Jellyfin.Plugin.LocalRecs.Models;
 using Jellyfin.Plugin.LocalRecs.Services;
 using Jellyfin.Plugin.LocalRecs.Tests.Fixtures;
 using MediaBrowser.Controller.Entities;
+using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -334,6 +335,59 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
                 "acceptance criteria requires <100ms for 100 watched items");
         }
 
+        [Fact]
+        public void BuildUserProfile_Series_UsesMostRecentWatchedEpisodeDateForRecency()
+        {
+            // Arrange — series watched 7 days ago vs movie watched 300 days ago
+            var seriesId = Guid.NewGuid();
+            var movieItem = TestMediaLibrary.CreateTestMovies().First(m => m.Name == "The Godfather");
+            var library = new List<MediaItemMetadata>
+            {
+                new MediaItemMetadata(seriesId, "Breaking Bad", MediaType.Series),
+                movieItem
+            };
+            var embeddings = CreateEmbeddings(library);
+
+            SetupSeriesWithWatchedEpisode(seriesId, DateTime.UtcNow.AddDays(-7));
+            SetupSpecificUserData(movieItem, isFavorite: false, playCount: 1, daysAgo: 300);
+
+            // Act
+            var profile = _service.BuildUserProfile(_testUserId, embeddings, _config);
+
+            // Assert
+            profile.Should().NotBeNull();
+            profile!.WatchedItemCount.Should().Be(2);
+
+            var seriesSimilarity = Utilities.VectorMath.CosineSimilarity(
+                profile.TasteVector, embeddings[seriesId].Vector);
+            var movieSimilarity = Utilities.VectorMath.CosineSimilarity(
+                profile.TasteVector, embeddings[movieItem.Id].Vector);
+
+            seriesSimilarity.Should().BeGreaterThan(movieSimilarity,
+                "series watched 7 days ago should outweigh movie watched 300 days ago");
+        }
+
+        [Fact]
+        public void BuildUserProfile_Series_WithNoWatchedEpisodes_IsExcluded()
+        {
+            // Arrange — series with zero watched episodes should not contribute to the profile
+            var seriesId = Guid.NewGuid();
+            var library = new List<MediaItemMetadata>
+            {
+                new MediaItemMetadata(seriesId, "Breaking Bad", MediaType.Series)
+            };
+            var embeddings = CreateEmbeddings(library);
+
+            SetupSeriesWithNoWatchedEpisodes(seriesId);
+
+            // Act
+            var profile = _service.BuildUserProfile(_testUserId, embeddings, _config);
+
+            // Assert
+            profile.Should().BeNull(
+                "a series with no watched episodes produces no watch records, so no profile should be built");
+        }
+
         // Helper methods
 
         private List<MediaItemMetadata> CreateLargeLibrary(int itemCount)
@@ -441,6 +495,51 @@ namespace Jellyfin.Plugin.LocalRecs.Tests.Domain
             // Match on the specific mock item returned by GetItemById
             _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockItem.Object))
                 .Returns(userData);
+        }
+
+        private void SetupSeriesWithWatchedEpisode(Guid seriesId, DateTime lastWatchedDate)
+        {
+            var mockSeries = new Mock<Series>();
+            _mockLibraryManager.Setup(m => m.GetItemById(seriesId)).Returns(mockSeries.Object);
+
+            var seriesUserData = new UserItemData
+            {
+                Key = seriesId.ToString(),
+                Played = false
+            };
+            _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockSeries.Object))
+                .Returns(seriesUserData);
+
+            var mockEpisode = new Mock<Episode>();
+            _mockLibraryManager
+                .Setup(m => m.GetItemList(It.IsAny<InternalItemsQuery>()))
+                .Returns(new System.Collections.Generic.List<BaseItem> { mockEpisode.Object });
+
+            var episodeUserData = new UserItemData
+            {
+                Key = mockEpisode.Object.Id.ToString(),
+                LastPlayedDate = lastWatchedDate
+            };
+            _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockEpisode.Object))
+                .Returns(episodeUserData);
+        }
+
+        private void SetupSeriesWithNoWatchedEpisodes(Guid seriesId)
+        {
+            var mockSeries = new Mock<Series>();
+            _mockLibraryManager.Setup(m => m.GetItemById(seriesId)).Returns(mockSeries.Object);
+
+            var seriesUserData = new UserItemData
+            {
+                Key = seriesId.ToString(),
+                Played = false
+            };
+            _mockUserDataManager.Setup(m => m.GetUserData(_testUser, mockSeries.Object))
+                .Returns(seriesUserData);
+
+            _mockLibraryManager
+                .Setup(m => m.GetItemList(It.IsAny<InternalItemsQuery>()))
+                .Returns(new System.Collections.Generic.List<BaseItem>());
         }
     }
 }
